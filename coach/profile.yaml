@@ -1,0 +1,37 @@
+schema_version: 1
+updated: null
+# Coach profile — autonomously maintained by /coach-insights.
+# Hand-editing is allowed but not required. Git-tracked for rollback.
+#
+# Tiers:
+#   candidate     — detected in 1 recent /coach-insights run; not yet injected
+#   probationary  — detected in 2-of-3 runs; injected at 30% probability
+#                   for first 7 days, then promoted to active
+#   active        — fully injected (confidence × cooldown gating)
+#
+# Confidence grows on recurrence, decays 5%/day untouched. <0.3 auto-retires.
+# Cap = 10 active entries; lowest-confidence evicted when a new one promotes.
+#
+# Each entry schema:
+#   id: stable-slug
+#   name: human-readable short name
+#   tier: candidate | probationary | active
+#   confidence: 0.0-1.0
+#   priority: 1-5 (for tie-breaking at the cap)
+#   nudge: single observational sentence, never prescriptive
+#   examples: short quoted evidence from transcripts (redacted)
+#   first_seen: ISO date
+#   last_seen_in_run: ISO date
+#   last_fired: ISO datetime (24h per-entry cooldown)
+#   promoted_at: ISO date | null  (probationary→active transition)
+#   source_session_ids: [short hashes]
+entries: []
+graduated: []
+archived: []
+session_banked_xp: 0
+milestone_xp: 0
+graduation_xp: 0
+manual_adjustments: 0
+# Deprecated compatibility alias for older installs; new code reads
+# session_banked_xp / milestone_xp / graduation_xp / manual_adjustments.
+banked_session_xp: 0

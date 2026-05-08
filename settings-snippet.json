@@ -1,0 +1,31 @@
+{
+  "_comment": "Merge the 'hooks' block below into your ~/.claude/settings.json. Optionally add the statusLine block too if you do not already have a custom statusline. ./install.sh does this automatically for hooks, rewrites `python3` to the absolute path it resolved at install time, substitutes that path into the statusline wrapper, and adds statusLine only when one is absent. If you are merging by hand, replace `python3` in the hook command strings with the full path from `command -v python3` — settings.json runs in a non-interactive shell where PATH is not guaranteed to include Homebrew / pyenv. Do NOT replace your whole settings.json — add these keys alongside your existing 'enabledPlugins', 'permissions', etc.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/coach-session-start.py",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/coach-user-prompt.py",
+            "timeout": 2
+          }
+        ]
+      }
+    ]
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "bash ~/.claude/coach/default-statusline-command.sh"
+  }
+}

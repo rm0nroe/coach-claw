@@ -1,0 +1,24 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/bootstrap.sh ${CLAUDE_PLUGIN_ROOT}/hooks/coach-session-start.py"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/bootstrap.sh ${CLAUDE_PLUGIN_ROOT}/hooks/coach-user-prompt.py"
+          }
+        ]
+      }
+    ]
+  }
+}

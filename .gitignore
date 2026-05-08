@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+*.egg-info/
+.coverage
+
+# macOS
+.DS_Store
+
+# Coach runtime state — these get populated after install, not shipped
+coach/.pending_*
+coach/.tip_state.json
+coach/.level_state.json
+coach/.last_session_start
+coach/.lock
+coach/banked_sessions.json
+coach/log.ndjson
+
+# Backup files from re-runs
+*.bak
+*.bak.*
+
+# Local-only docs (rich working notes that aren't shipped publicly).
+# Leading slash anchors the rule to the repo root — without it, the
+# pattern would case-insensitively match coach/changelog.md (the per-run
+# profile mutation log) on macOS APFS, which IS a tracked file.
+/CHANGELOG.md
+/CLAUDE.local.md
+
+# Local-only social preview iterations — kept on disk for reference,
+# not shipped. Repo-card image is uploaded via GitHub Settings if needed.
+artifacts/social-preview*.png

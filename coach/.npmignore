@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.pending_*
+.tip_state.json
+.level_state.json
+.last_session_start
+.lock
+banked_sessions.json
+log.ndjson

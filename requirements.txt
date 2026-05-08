@@ -1,0 +1,11 @@
+# Claude Code Coach dependencies.
+#
+# install.sh installs these automatically via `python3 -m pip install --user`.
+# Listed here for transparency.
+
+# Required at runtime (merge.py, stats.py, status.py, bank.py, hooks)
+pyyaml>=5.4
+
+# Required only to run the test suite (coach/tests/).
+# pytest isn't installed by default — add with: python3 -m pip install --user pytest
+# pytest>=7.0

@@ -1,0 +1,1071 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Coach Claw — A self-evolving coaching layer for Claude Code</title>
+<meta name="description" content="Coach Claw reads your Claude Code transcripts, learns your habits, and ships ambient tips and XP rewards as you work. Local-only, deterministic, open source.">
+<meta property="og:title" content="Coach Claw">
+<meta property="og:description" content="A self-evolving coaching layer for Claude Code.">
+<meta property="og:type" content="website">
+<meta name="twitter:card" content="summary">
+
+<!-- Set the JS-on flag synchronously so the .reveal hidden state
+     applies before first paint. If this script fails, the [data-js="on"]
+     selector never matches and content stays visible (graceful fallback). -->
+<script>document.documentElement.setAttribute('data-js', 'on');</script>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+<style>
+  /* === TOKENS ===================================================== */
+  :root {
+    --bg: #0a0a0a;
+    --bg-elev: #121212;
+    --bg-card: #161616;
+    --fg: #fafafa;
+    --fg-mute: #9a9a9a;
+    --fg-dim: #6b6b6b;
+    --rule: #1f1f1f;
+    --rule-strong: #2a2a2a;
+    --accent: #ff4d3a;
+    --accent-dim: #c93b2c;
+    --accent-glow: rgba(255, 77, 58, 0.18);
+    --green: #4ade80;
+    --max: 1180px;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: geometricPrecision;
+  }
+
+  body { overflow-x: hidden; }
+
+  a { color: inherit; text-decoration: none; }
+
+  ::selection { background: var(--accent); color: var(--bg); }
+
+  /* progressive enhancement: by default .reveal is visible. The
+     JS sets `data-js="on"` on <html> synchronously in <head>, which
+     enables the hidden state. If JS or GSAP fails to load, content
+     stays visible. */
+  [data-js="on"] .reveal { opacity: 0; will-change: transform, opacity; }
+
+  @media (prefers-reduced-motion: reduce) {
+    [data-js="on"] .reveal { opacity: 1 !important; transform: none !important; }
+  }
+
+  /* === GLOBAL FRAME ============================================== */
+  .ambient {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    background:
+      radial-gradient(circle at 20% 12%, rgba(255, 77, 58, 0.10), transparent 38%),
+      radial-gradient(circle at 88% 70%, rgba(255, 77, 58, 0.045), transparent 42%);
+  }
+
+  .container {
+    width: 100%;
+    max-width: var(--max);
+    margin: 0 auto;
+    padding: 0 32px;
+    position: relative;
+    z-index: 1;
+  }
+
+  /* === NAV ======================================================= */
+  nav {
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    background: rgba(10, 10, 10, 0.65);
+    border-bottom: 1px solid var(--rule);
+  }
+
+  nav .row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 18px 0;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+  }
+
+  nav .brand {
+    color: var(--fg);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  nav .brand .dot {
+    width: 8px;
+    height: 8px;
+    background: var(--accent);
+    border-radius: 50%;
+    box-shadow: 0 0 12px var(--accent);
+  }
+
+  nav .links {
+    display: flex;
+    align-items: center;
+    gap: 28px;
+    color: var(--fg-mute);
+  }
+
+  nav .links a {
+    transition: color 0.15s ease;
+  }
+
+  nav .links a:hover { color: var(--fg); }
+
+  nav .gh {
+    color: var(--accent);
+    border: 1px solid var(--accent-dim);
+    padding: 6px 14px;
+    border-radius: 999px;
+    font-size: 11px;
+    transition: transform 0.15s ease, background 0.15s ease;
+  }
+
+  nav .gh:hover {
+    background: rgba(255, 77, 58, 0.08);
+    transform: translateY(-1px);
+  }
+
+  /* === HERO ====================================================== */
+  .hero {
+    position: relative;
+    padding: 120px 0 80px;
+    min-height: 88vh;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+  }
+
+  .hero .eyebrow {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--fg-mute);
+    margin-bottom: 28px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .hero .eyebrow::before {
+    content: "";
+    width: 24px;
+    height: 1px;
+    background: var(--accent);
+  }
+
+  .hero h1 {
+    font-family: 'Instrument Serif', serif;
+    font-style: italic;
+    font-weight: 400;
+    font-size: clamp(72px, 12vw, 168px);
+    line-height: 0.92;
+    letter-spacing: -0.02em;
+    margin-bottom: 36px;
+  }
+
+  .hero h1 .word { display: inline-block; }
+  .hero h1 .coach { color: var(--fg); }
+  .hero h1 .claw {
+    color: var(--accent);
+    margin-left: 0.18em;
+  }
+  .hero h1 .lobster {
+    font-style: normal;
+    font-size: 0.46em;
+    margin-left: 0.18em;
+    transform: translateY(-0.55em);
+    display: inline-block;
+    filter: drop-shadow(0 0 24px var(--accent-glow));
+  }
+
+  .hero .tagline {
+    font-size: clamp(18px, 1.6vw, 22px);
+    line-height: 1.5;
+    color: var(--fg);
+    max-width: 640px;
+    margin-bottom: 44px;
+    letter-spacing: -0.005em;
+  }
+
+  .hero .tagline strong { font-weight: 600; }
+  .hero .tagline .em { color: var(--accent); font-weight: 500; }
+
+  .hero .ctas {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+
+  .install {
+    display: inline-flex;
+    align-items: center;
+    gap: 0;
+    background: var(--bg-card);
+    border: 1px solid var(--rule-strong);
+    border-radius: 10px;
+    overflow: hidden;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 14px;
+  }
+
+  .install .prompt {
+    color: var(--fg-dim);
+    padding: 14px 12px 14px 18px;
+  }
+
+  .install code {
+    color: var(--fg);
+    padding: 14px 4px;
+    font-family: inherit;
+    user-select: all;
+  }
+
+  .install button {
+    background: transparent;
+    border: 0;
+    border-left: 1px solid var(--rule-strong);
+    color: var(--fg-mute);
+    padding: 14px 16px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: color 0.15s ease, background 0.15s ease;
+  }
+
+  .install button:hover { color: var(--accent); background: rgba(255,77,58,0.05); }
+  .install button.copied { color: var(--green); }
+
+  .hero .secondary {
+    color: var(--fg-mute);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    transition: color 0.15s ease;
+  }
+
+  .hero .secondary:hover { color: var(--fg); }
+  .hero .secondary::after { content: " →"; }
+
+  .hero .meta-row {
+    margin-top: 56px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 32px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--fg-dim);
+  }
+
+  .hero .meta-row span { display: flex; align-items: center; gap: 8px; }
+  .hero .meta-row span::before {
+    content: "";
+    width: 5px;
+    height: 5px;
+    background: var(--fg-dim);
+    border-radius: 50%;
+  }
+
+  /* === SECTION SCAFFOLDING ======================================= */
+  section {
+    padding: 100px 0;
+    position: relative;
+  }
+
+  .eyebrow-tag {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 20px;
+    display: inline-flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .eyebrow-tag::before {
+    content: "";
+    width: 24px;
+    height: 1px;
+    background: var(--accent);
+  }
+
+  h2 {
+    font-family: 'Instrument Serif', serif;
+    font-style: italic;
+    font-weight: 400;
+    font-size: clamp(40px, 5vw, 64px);
+    line-height: 1.0;
+    letter-spacing: -0.015em;
+    margin-bottom: 24px;
+    max-width: 800px;
+  }
+
+  h2 .em { color: var(--accent); }
+
+  .section-lede {
+    font-size: 18px;
+    line-height: 1.55;
+    color: var(--fg-mute);
+    max-width: 600px;
+    margin-bottom: 72px;
+  }
+
+  /* === FEATURES GRID ============================================= */
+  .features {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1px;
+    background: var(--rule);
+    border: 1px solid var(--rule);
+    border-radius: 14px;
+    overflow: hidden;
+  }
+
+  @media (max-width: 880px) {
+    .features { grid-template-columns: 1fr; }
+  }
+
+  .feature {
+    background: var(--bg-elev);
+    padding: 36px 32px;
+    transition: background 0.2s ease;
+  }
+
+  .feature:hover { background: var(--bg-card); }
+
+  .feature .num {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.18em;
+    color: var(--accent);
+    margin-bottom: 28px;
+  }
+
+  .feature h3 {
+    font-family: 'Inter', sans-serif;
+    font-size: 22px;
+    font-weight: 600;
+    line-height: 1.25;
+    letter-spacing: -0.01em;
+    margin-bottom: 14px;
+  }
+
+  .feature p {
+    font-size: 15px;
+    line-height: 1.6;
+    color: var(--fg-mute);
+  }
+
+  /* === PINNED DEMO =============================================== */
+  .demo-pin {
+    position: relative;
+    /* total scroll distance for the pinned section: 4 frames × ~80vh */
+    height: 320vh;
+  }
+
+  .demo-pin .stage {
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+  }
+
+  .demo-pin .stage::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background:
+      radial-gradient(ellipse at center, rgba(255,77,58,0.06), transparent 60%);
+    pointer-events: none;
+  }
+
+  .terminal {
+    position: relative;
+    z-index: 2;
+    width: min(880px, 92%);
+    background: var(--bg-card);
+    border: 1px solid var(--rule-strong);
+    border-radius: 14px;
+    box-shadow:
+      0 30px 80px -20px rgba(0,0,0,0.7),
+      0 0 0 1px rgba(255,77,58,0.04);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 14.5px;
+    line-height: 1.6;
+    overflow: hidden;
+    will-change: transform;
+  }
+
+  .terminal .titlebar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--rule);
+    background: rgba(255,255,255,0.015);
+  }
+
+  .terminal .titlebar .traffic {
+    display: flex;
+    gap: 7px;
+  }
+
+  .terminal .titlebar .traffic span {
+    width: 11px;
+    height: 11px;
+    border-radius: 50%;
+    background: #333;
+  }
+
+  .terminal .titlebar .traffic span:nth-child(1) { background: #ff5f57; }
+  .terminal .titlebar .traffic span:nth-child(2) { background: #febc2e; }
+  .terminal .titlebar .traffic span:nth-child(3) { background: #28c840; }
+
+  .terminal .titlebar .name {
+    margin-left: 12px;
+    font-size: 12px;
+    color: var(--fg-dim);
+    letter-spacing: 0.05em;
+  }
+
+  .terminal .body {
+    padding: 24px 28px 28px;
+    min-height: 360px;
+    color: var(--fg);
+  }
+
+  .terminal .frame {
+    display: none;
+  }
+
+  .terminal .frame.active {
+    display: block;
+  }
+
+  .terminal .prompt-line {
+    color: var(--fg-mute);
+  }
+
+  .terminal .prompt-line .gt { color: var(--accent); margin-right: 10px; }
+
+  .terminal .out {
+    color: var(--fg-mute);
+    margin-top: 14px;
+  }
+
+  .terminal .coach-block {
+    margin-top: 24px;
+    padding-left: 16px;
+    border-left: 2px solid var(--rule-strong);
+    color: var(--fg);
+  }
+
+  .terminal .coach-block .lead {
+    color: var(--accent);
+    font-weight: 500;
+  }
+
+  .terminal .coach-block .label {
+    color: var(--fg);
+    font-weight: 600;
+  }
+
+  .terminal .xp {
+    color: var(--fg-mute);
+    font-style: italic;
+    margin-top: 6px;
+  }
+
+  .terminal .xp .bar { color: var(--accent); letter-spacing: 0.1em; }
+
+  .terminal .em-yellow { color: #fbbf24; font-weight: 600; }
+
+  /* progress dots — show which frame is active */
+  .demo-progress {
+    position: absolute;
+    z-index: 3;
+    top: 50%;
+    right: 32px;
+    transform: translateY(-50%);
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .demo-progress .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--rule-strong);
+    transition: background 0.3s ease, transform 0.3s ease;
+  }
+
+  .demo-progress .dot.active {
+    background: var(--accent);
+    transform: scale(1.4);
+    box-shadow: 0 0 12px var(--accent);
+  }
+
+  .demo-caption {
+    position: absolute;
+    z-index: 3;
+    bottom: 56px;
+    left: 50%;
+    transform: translateX(-50%);
+    text-align: center;
+    width: min(680px, 90%);
+  }
+
+  .demo-caption .label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 8px;
+  }
+
+  .demo-caption .text {
+    color: var(--fg-mute);
+    font-size: 16px;
+    line-height: 1.5;
+  }
+
+  /* === HOW IT WORKS ============================================== */
+  .how {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 64px;
+    align-items: start;
+  }
+
+  @media (max-width: 880px) {
+    .how { grid-template-columns: 1fr; }
+  }
+
+  .steps { display: flex; flex-direction: column; gap: 1px; background: var(--rule); border: 1px solid var(--rule); border-radius: 14px; overflow: hidden; }
+
+  .step {
+    background: var(--bg-elev);
+    padding: 28px 32px;
+    display: grid;
+    grid-template-columns: 64px 1fr;
+    gap: 16px;
+    align-items: start;
+  }
+
+  .step .num {
+    font-family: 'Instrument Serif', serif;
+    font-style: italic;
+    font-size: 36px;
+    color: var(--accent);
+    line-height: 1;
+  }
+
+  .step h4 {
+    font-size: 17px;
+    font-weight: 600;
+    margin-bottom: 6px;
+    letter-spacing: -0.005em;
+  }
+
+  .step p {
+    font-size: 14.5px;
+    line-height: 1.55;
+    color: var(--fg-mute);
+  }
+
+  /* === CTA / FOOTER ============================================== */
+  .cta {
+    text-align: center;
+    padding: 140px 0 80px;
+  }
+
+  .cta h2 {
+    margin-left: auto;
+    margin-right: auto;
+    text-align: center;
+  }
+
+  .cta .install {
+    margin: 0 auto;
+    margin-top: 36px;
+  }
+
+  footer {
+    border-top: 1px solid var(--rule);
+    padding: 36px 0;
+    color: var(--fg-dim);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+  }
+
+  footer .row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 16px;
+  }
+
+  footer a { transition: color 0.15s ease; }
+  footer a:hover { color: var(--fg); }
+</style>
+</head>
+
+<body>
+<div class="ambient" aria-hidden="true"></div>
+
+<nav>
+  <div class="container">
+    <div class="row">
+      <a href="#top" class="brand"><span class="dot"></span><span>COACH&nbsp;CLAW</span></a>
+      <div class="links">
+        <a href="#how">How it works</a>
+        <a href="#install">Install</a>
+        <a href="https://github.com/rm0nroe/coach-claw" class="gh">GitHub →</a>
+      </div>
+    </div>
+  </div>
+</nav>
+
+<section class="hero" id="top">
+  <div class="container">
+    <div class="eyebrow reveal" data-reveal="fade-up">v1.0.2 · OPEN SOURCE · MIT</div>
+    <h1>
+      <span class="word coach reveal" data-reveal="hero-word">Coach</span><span class="lobster reveal" data-reveal="hero-emoji">🦞</span><span class="word claw reveal" data-reveal="hero-word">Claw</span>
+    </h1>
+    <p class="tagline reveal" data-reveal="fade-up">
+      A <strong>self-evolving</strong> coaching layer for Claude Code.
+      Reads your transcripts, learns your habits, ships <span class="em">ambient tips</span>
+      and XP rewards as you work.
+    </p>
+    <div class="ctas reveal" data-reveal="fade-up">
+      <div class="install">
+        <span class="prompt">$</span>
+        <code id="hero-install-cmd">npx @rm0nroe/coach-claw@latest install --seed</code>
+        <button data-copy="hero-install-cmd">Copy</button>
+      </div>
+      <a class="secondary" href="#how">See how it works</a>
+    </div>
+    <div class="meta-row reveal" data-reveal="fade-up">
+      <span>Local · zero-network</span>
+      <span>Deterministic cron</span>
+      <span>Comprehensive test suite</span>
+      <span>macOS · Linux</span>
+    </div>
+  </div>
+</section>
+
+<section id="features">
+  <div class="container">
+    <div class="reveal" data-reveal="fade-up">
+      <span class="eyebrow-tag">What you get</span>
+      <h2>Coaching that grows <span class="em">with you</span>, not against a fixed checklist.</h2>
+      <p class="section-lede">
+        Coach Claw watches how you actually use Claude Code, surfaces the
+        habits worth reinforcing, and quietly upgrades its own watch-list
+        as your work shifts.
+      </p>
+    </div>
+
+    <div class="features">
+      <div class="feature reveal" data-reveal="card-up">
+        <div class="num">01 / TRANSCRIPTS</div>
+        <h3>Reads your sessions, on a schedule.</h3>
+        <p>A daily deterministic pass walks redacted transcripts and detects behavior patterns — no LLM on the cron path, zero tokens, zero network.</p>
+      </div>
+      <div class="feature reveal" data-reveal="card-up">
+        <div class="num">02 / WATCH-LIST</div>
+        <h3>Tracks weaknesses and strengths.</h3>
+        <p>Behaviors land in <code>profile.yaml</code>. Strengths get reinforcement banners; weaknesses get nudges. Both graduate or retire as the data shifts.</p>
+      </div>
+      <div class="feature reveal" data-reveal="card-up">
+        <div class="num">03 / AMBIENT TIPS</div>
+        <h3>Coaches in real time, while you work.</h3>
+        <p>Two Claude Code hooks inject pre-rendered tips, streak rewards, and level-up banners — never narrating, always forward-looking.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="demo-pin" id="demo">
+  <div class="stage">
+    <div class="terminal" id="terminal">
+      <div class="titlebar">
+        <div class="traffic"><span></span><span></span><span></span></div>
+        <div class="name">claude — @rm0nroe/coach-claw</div>
+      </div>
+      <div class="body">
+        <div class="frame" data-frame="0">
+          <div class="prompt-line"><span class="gt">&gt;</span>git commit -m "wire up auth"</div>
+          <div class="out">[main 4f8a1c2] wire up auth · 4 files changed, 117 insertions(+), 9 deletions(-)</div>
+        </div>
+        <div class="frame" data-frame="1">
+          <div class="prompt-line"><span class="gt">&gt;</span>git commit -m "wire up auth"</div>
+          <div class="out">[main 4f8a1c2] wire up auth · 4 files changed, 117 insertions(+), 9 deletions(-)</div>
+          <div class="coach-block">
+            <div><span class="lead">🦞</span> <span class="label">From Coach Claw:</span> kicking off pytest right after that edit batch is exactly the habit your profile tracks.</div>
+            <div class="xp">⚡️ +1 XP · safe-git-hygiene streak <span class="bar">●●●··</span></div>
+          </div>
+        </div>
+        <div class="frame" data-frame="2">
+          <div class="prompt-line"><span class="gt">&gt;</span>pytest coach/tests/ -k merge</div>
+          <div class="out">============ 12 passed in 0.84s ============</div>
+          <div class="coach-block">
+            <div><span class="em-yellow">🌟</span> <span class="label">Power-up:</span> running the test for the module you just edited before your next commit is what graduates a habit from streak to mastered.</div>
+            <div class="xp">⚡️ +2 XP · clean-streak <span class="bar">●●●●·</span></div>
+          </div>
+        </div>
+        <div class="frame" data-frame="3">
+          <div class="prompt-line"><span class="gt">&gt;</span>/coach-insights</div>
+          <div class="coach-block">
+            <div><span class="em-yellow">🎓🌟</span> <span class="label">MASTERED: safe-git-hygiene</span> &nbsp;<span class="lead">+5 XP</span></div>
+            <div class="xp"><span class="bar">●●●●●</span> 5 consecutive insights runs detected this habit — it's now a core strength.</div>
+            <div style="margin-top:14px"><span class="em-yellow">🎉</span> <span class="label">Level up.</span> You're now <span class="lead">L8 Sensei</span>.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="demo-progress" aria-hidden="true">
+      <div class="dot active"></div>
+      <div class="dot"></div>
+      <div class="dot"></div>
+      <div class="dot"></div>
+    </div>
+
+    <div class="demo-caption">
+      <div class="label">Scroll to step through</div>
+      <div class="text" id="demo-caption-text">A normal commit lands. Coach watches.</div>
+    </div>
+  </div>
+</section>
+
+<section id="how">
+  <div class="container">
+    <div class="reveal" data-reveal="fade-up">
+      <span class="eyebrow-tag">Under the hood</span>
+      <h2>Determinism where it <span class="em">matters</span>.</h2>
+      <p class="section-lede">
+        The cron path is local-only and LLM-free, so daily runs are
+        reproducible and cost zero tokens. The LLM only writes the tip
+        body — labels, XP lines, and streak bars are pre-computed in
+        Python.
+      </p>
+    </div>
+
+    <div class="how">
+      <div class="steps">
+        <div class="step reveal" data-reveal="card-up">
+          <div class="num">i.</div>
+          <div>
+            <h4>Daily deterministic pass</h4>
+            <p>analyze.py walks redacted transcripts, emits detections under run-id <code>insights-&lt;ts&gt;</code>. Atomic write under flock, one commit per run.</p>
+          </div>
+        </div>
+        <div class="step reveal" data-reveal="card-up">
+          <div class="num">ii.</div>
+          <div>
+            <h4>Weekly LLM-triggered refresh</h4>
+            <p>Once per 7 days, fires <code>claude -p "/insights"</code> for its sidecar refresh side-effect, then aggregates JSON deterministically.</p>
+          </div>
+        </div>
+        <div class="step reveal" data-reveal="card-up">
+          <div class="num">iii.</div>
+          <div>
+            <h4>Two Claude Code hooks</h4>
+            <p>SessionStart loads the watch-list and queues celebrate banners; UserPromptSubmit schedules tips, banks XP, and renders streaks.</p>
+          </div>
+        </div>
+        <div class="step reveal" data-reveal="card-up">
+          <div class="num">iv.</div>
+          <div>
+            <h4>Hybrid ELO + level system</h4>
+            <p>50-level craft ladder with 12 theme variants and statusline integration. Configurable ELO range via <code>/config</code>; XP thresholds stay fixed across themes.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="reveal" data-reveal="fade-up">
+        <h3 style="font-family:'Instrument Serif',serif;font-style:italic;font-size:36px;line-height:1.05;letter-spacing:-0.01em;margin-bottom:16px">All data stays local.</h3>
+        <p style="color:var(--fg-mute);line-height:1.6;font-size:16px;margin-bottom:24px">
+          <code>profile.yaml</code> never leaves your machine. The daily path is zero-network. The weekly path's <code>/insights</code> stdout is discarded — only the local sidecar refresh is consumed.
+        </p>
+        <div class="install">
+          <span class="prompt">$</span>
+          <code id="curl-cmd">cat ~/.claude/coach/profile.yaml</code>
+          <button data-copy="curl-cmd">Copy</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="cta" id="install">
+  <div class="container">
+    <div class="reveal" data-reveal="fade-up">
+      <span class="eyebrow-tag">Get started</span>
+      <h2>Two minutes to your first <span class="em">tip</span>.</h2>
+      <p class="section-lede" style="margin-left:auto;margin-right:auto;text-align:center">
+        macOS launchd or Linux cron. Idempotent installer. Backs up
+        existing state. Roll back any run with <code>git checkout</code>.
+      </p>
+      <div class="install">
+        <span class="prompt">$</span>
+        <code id="cta-install-cmd">npx @rm0nroe/coach-claw@latest install --seed</code>
+        <button data-copy="cta-install-cmd">Copy</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="container">
+    <div class="row">
+      <div>© 2026 · MIT License</div>
+      <div style="display:flex;gap:24px">
+        <a href="https://github.com/rm0nroe/coach-claw">GitHub</a>
+        <a href="https://github.com/rm0nroe/coach-claw/blob/main/CONTRIBUTING.md">Contribute</a>
+      </div>
+    </div>
+  </div>
+</footer>
+
+<!-- GSAP + ScrollTrigger via CDN -->
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+
+<script>
+  // Safety net: if GSAP fails to load within 2.5s (offline, CDN
+  // blocked, etc.), reveal all content so the page remains usable.
+  setTimeout(() => {
+    if (!window.gsap) {
+      document.documentElement.removeAttribute('data-js');
+    }
+  }, 2500);
+</script>
+
+<script>
+  // === Performance contract (per /gsap-performance) ==============
+  // - Animate transforms + opacity ONLY. No top/left/width/height.
+  // - gsap.set() to lock initial state and avoid FOUC.
+  // - ScrollTrigger.batch() for stagger reveals (one observer, many targets).
+  // - gsap.matchMedia() to short-circuit motion when prefers-reduced-motion.
+  // - will-change: transform on .reveal; gsap auto-clears post-animation.
+
+  gsap.registerPlugin(ScrollTrigger);
+
+  // copy-to-clipboard buttons
+  document.querySelectorAll('button[data-copy]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const target = document.getElementById(btn.dataset.copy);
+      if (!target) return;
+      try {
+        await navigator.clipboard.writeText(target.textContent.trim());
+        const original = btn.textContent;
+        btn.textContent = 'Copied';
+        btn.classList.add('copied');
+        setTimeout(() => {
+          btn.textContent = original;
+          btn.classList.remove('copied');
+        }, 1400);
+      } catch (e) { /* clipboard blocked — silently fail */ }
+    });
+  });
+
+  // single matchMedia handles both motion + reduced-motion paths
+  const mm = gsap.matchMedia();
+
+  mm.add({
+    motion: '(prefers-reduced-motion: no-preference)',
+    reduced: '(prefers-reduced-motion: reduce)',
+  }, (ctx) => {
+    const { motion, reduced } = ctx.conditions;
+
+    if (reduced) {
+      // reveal everything immediately, no animation
+      gsap.set('.reveal', { autoAlpha: 1, y: 0 });
+      return;
+    }
+
+    // === Hero stagger reveal on load ============================
+    const heroTl = gsap.timeline({ defaults: { ease: 'power3.out' }});
+
+    heroTl.fromTo('.hero .eyebrow.reveal',
+      { opacity: 0, y: 12 },
+      { opacity: 1, y: 0, duration: 0.7 }
+    );
+
+    // big wordmark — letter-spacing animations would trigger layout,
+    // so we slide the two words from a y-offset (transform only)
+    heroTl.fromTo('.hero h1 .word.reveal',
+      { opacity: 0, y: 36 },
+      { opacity: 1, y: 0, duration: 0.9, stagger: 0.08 },
+      '-=0.4'
+    );
+
+    heroTl.fromTo('.hero h1 .lobster.reveal',
+      { opacity: 0, scale: 0.6, rotate: -12 },
+      { opacity: 1, scale: 1, rotate: 0, duration: 0.7, ease: 'back.out(1.6)' },
+      '-=0.6'
+    );
+
+    heroTl.fromTo('.hero .tagline.reveal',
+      { opacity: 0, y: 16 },
+      { opacity: 1, y: 0, duration: 0.7 },
+      '-=0.4'
+    );
+
+    heroTl.fromTo('.hero .ctas.reveal, .hero .meta-row.reveal',
+      { opacity: 0, y: 14 },
+      { opacity: 1, y: 0, duration: 0.6, stagger: 0.08 },
+      '-=0.45'
+    );
+
+    // === Generic scroll reveal — fade-up =========================
+    // ScrollTrigger.batch shares one IntersectionObserver across all
+    // .reveal[data-reveal="fade-up"] outside the hero — way cheaper
+    // than one ScrollTrigger per element.
+    ScrollTrigger.batch('.reveal[data-reveal="fade-up"]:not(.hero .reveal):not(.hero h1 *)', {
+      start: 'top 88%',
+      onEnter: batch => gsap.fromTo(batch,
+        { opacity: 0, y: 24 },
+        { opacity: 1, y: 0, duration: 0.7, stagger: 0.08, ease: 'power3.out', overwrite: true }
+      ),
+      once: true,
+    });
+
+    // card-up reveals — slightly stronger movement, longer stagger
+    ScrollTrigger.batch('.reveal[data-reveal="card-up"]', {
+      start: 'top 86%',
+      onEnter: batch => gsap.fromTo(batch,
+        { opacity: 0, y: 32 },
+        { opacity: 1, y: 0, duration: 0.7, stagger: 0.1, ease: 'power3.out', overwrite: true }
+      ),
+      once: true,
+    });
+
+    // === Subtle hero parallax — transform only ==================
+    gsap.to('.hero h1, .hero .tagline, .hero .meta-row', {
+      y: -40,
+      ease: 'none',
+      scrollTrigger: {
+        trigger: '.hero',
+        start: 'top top',
+        end: 'bottom top',
+        scrub: 0.6,
+      }
+    });
+
+    // === Pinned terminal demo ===================================
+    // Single ScrollTrigger drives a step counter (0..3); we toggle
+    // .active classes on demand. No DOM rebuild per step — cheap.
+    const frames = document.querySelectorAll('#terminal .frame');
+    const dots = document.querySelectorAll('.demo-progress .dot');
+    const captionEl = document.getElementById('demo-caption-text');
+    const captions = [
+      "A normal commit lands. Coach watches.",
+      "Coach surfaces an ambient tip — never narrating, always forward-looking.",
+      "Strength tip on the next step. The streak bar advances toward mastery.",
+      "Five consecutive runs. The habit graduates and a level lands.",
+    ];
+
+    function setFrame(i) {
+      i = Math.max(0, Math.min(frames.length - 1, i));
+      frames.forEach((f, idx) => f.classList.toggle('active', idx === i));
+      dots.forEach((d, idx) => d.classList.toggle('active', idx === i));
+      if (captionEl) captionEl.textContent = captions[i];
+
+      // soft reveal of the active frame's coach-block (transform only)
+      const block = frames[i].querySelector('.coach-block');
+      if (block) {
+        gsap.fromTo(block,
+          { opacity: 0, y: 14 },
+          { opacity: 1, y: 0, duration: 0.5, ease: 'power2.out', overwrite: true }
+        );
+      }
+    }
+
+    setFrame(0);
+
+    ScrollTrigger.create({
+      trigger: '.demo-pin',
+      start: 'top top',
+      end: 'bottom bottom',
+      onUpdate: self => {
+        const idx = Math.floor(self.progress * frames.length * 0.999);
+        if (idx !== ScrollTrigger.lastFrame) {
+          ScrollTrigger.lastFrame = idx;
+          setFrame(idx);
+        }
+      },
+    });
+
+    // gentle terminal scale+lift while pinned (transform only)
+    gsap.fromTo('#terminal',
+      { scale: 0.96, y: 18 },
+      {
+        scale: 1, y: 0, ease: 'none',
+        scrollTrigger: {
+          trigger: '.demo-pin',
+          start: 'top bottom',
+          end: 'top center',
+          scrub: 0.4,
+        }
+      }
+    );
+
+    return () => {
+      // cleanup on matchMedia tear-down — gsap handles tweens, we
+      // just clear inline transforms to avoid stuck state.
+      gsap.set('.reveal', { clearProps: 'all' });
+    };
+  });
+</script>
+</body>
+</html>

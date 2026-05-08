@@ -1,0 +1,22 @@
+{
+  "name": "coach-claw-plugins",
+  "description": "Coach Claw — self-evolving coaching layer for Claude Code.",
+  "owner": {
+    "name": "Ryan Monroe"
+  },
+  "plugins": [
+    {
+      "name": "coach-claw",
+      "description": "Ambient coaching, XP, and session insights driven by your own transcript history. Parallel distribution to the npm CLI; same coach state shared.",
+      "homepage": "https://github.com/rm0nroe/coach-claw",
+      "license": "MIT",
+      "category": "developer-experience",
+      "keywords": ["coaching", "insights", "statusline", "xp", "self-evolving"],
+      "source": {
+        "source": "git-subdir",
+        "url": "https://github.com/rm0nroe/coach-claw",
+        "path": "plugin"
+      }
+    }
+  ]
+}

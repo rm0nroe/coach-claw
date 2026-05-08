@@ -1,0 +1,52 @@
+{
+  "name": "@rm0nroe/coach-claw",
+  "version": "1.0.5",
+  "description": "A self-evolving coaching layer for Claude Code.",
+  "license": "MIT",
+  "homepage": "https://rm0nroe.github.io/coach-claw/",
+  "bugs": {
+    "url": "https://github.com/rm0nroe/coach-claw/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rm0nroe/coach-claw.git"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "bin": {
+    "coach-claw": "npm/coach-claw.js"
+  },
+  "files": [
+    "coach/",
+    "hooks/",
+    "skills/",
+    "launchd/",
+    "npm/",
+    "install.sh",
+    "install-launchd.sh",
+    "settings-snippet.json",
+    "requirements.txt",
+    "README.md",
+    "LICENSE"
+  ],
+  "os": [
+    "darwin",
+    "linux"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "doctor": "node npm/coach-claw.js doctor",
+    "test": "python3 -m pytest coach/tests",
+    "pack:dry": "npm pack --dry-run --json"
+  },
+  "keywords": [
+    "claude-code",
+    "coach",
+    "claude",
+    "hooks",
+    "cli"
+  ]
+}
