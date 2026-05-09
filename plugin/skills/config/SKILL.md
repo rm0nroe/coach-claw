@@ -6,8 +6,8 @@ The Coach reads `~/.claude/coach/.user_config.json` at every render. This
 skill is the slash-command surface for editing it without touching files
 by hand. Three things are tunable:
 
-- **Statusline variant** — how the trailing coach segment renders. Five
-  options: `crystal`, `pips`, `bracket`, `slash`, `forge`.
+- **Statusline variant** — how the trailing coach segment renders. Four
+  options: `crystal`, `pips`, `slash`, `forge`.
 - **Theme** — the 50-name level ladder. Twelve options: `craft`
   (default), `forge`, `cosmic`, `ocean`, `skyrim`, `marvel`, `dc`,
   `finalfantasy`, `military`, `lotr`, `starwars`, `hacker`.

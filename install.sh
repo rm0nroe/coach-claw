@@ -237,7 +237,9 @@ if [[ -e "$CLAUDE_DIR/coach" ]]; then
     profile.yaml banked_sessions.json changelog.md log.ndjson \
     .disabled .tip_state.json .level_state.json .last_session_start \
     .last_weekly_insights .user_config.json \
-    .pending_*; do
+    .pending_* \
+    .statusline-wrap.json .statusline-wrap-disabled \
+    .statusline-wrap-announced .statusline-wrap-duplicate-detected; do
     for src in "$CLAUDE_DIR/coach"/$state_file; do
       [[ -e "$src" ]] || continue
       cp -p "$src" "$PRESERVE_DIR/$(basename "$src")"
@@ -337,9 +339,18 @@ if [[ -f "$BUNDLE_DIR/coach/default-statusline-command.sh" ]]; then
     > "$CLAUDE_DIR/coach/default-statusline-command.sh"
 fi
 
+# Wrap-mode statusline trampoline (v0.1.4): symmetric installer-time
+# substitution. settings.json:statusLine.command points at this when
+# the user's existing statusLine got auto-wrapped by the wrap helper.
+if [[ -f "$BUNDLE_DIR/coach/default-statusline-wrap-command.sh" ]]; then
+  sed "s|@PY@|$PY|g" "$BUNDLE_DIR/coach/default-statusline-wrap-command.sh" \
+    > "$CLAUDE_DIR/coach/default-statusline-wrap-command.sh"
+fi
+
 # Make the executables executable
 chmod +x "$CLAUDE_DIR/coach/bin/"*.py "$CLAUDE_DIR/coach/bin/"*.sh \
          "$CLAUDE_DIR/coach/default-statusline-command.sh" \
+         "$CLAUDE_DIR/coach/default-statusline-wrap-command.sh" \
          "$CLAUDE_DIR/hooks/coach-session-start.py" \
          "$CLAUDE_DIR/hooks/coach-user-prompt.py" 2>/dev/null || true
 ok "files copied"
@@ -461,6 +472,16 @@ PYEOF
 
 [[ $? -eq 0 ]] || die "settings.json patch failed — see message above"
 
+# Wrap-mode auto-wrap (v0.1.4). When settings.json:statusLine is
+# `claimed` (user's custom shell script), the helper appends Coach's
+# segment by saving the original and replacing the command with our
+# wrap trampoline. Skips if a sticky opt-out marker is present OR the
+# user's script already references Coach internals (manual-Coach
+# pre-flight). Always exits 0 — never breaks an install.
+COACH_CONFIG_DIR="$CLAUDE_DIR/coach" \
+CLAUDE_SETTINGS_PATH="$SETTINGS" \
+  "$PY" "$CLAUDE_DIR/coach/bin/statusline_wrap_action.py" wrap-if-claimed || true
+
 # If the patch ran cleanly but didn't actually change settings.json (everything
 # already registered, byte-identical output), the .bak.<ts> from the snapshot
 # above is dead weight. Drop it. Real diffs leave the .bak in place for the
@@ -557,7 +578,7 @@ What's next:
 
   3. Customize the look any time (theme also changes rank names + celebration banners):
         Inside Claude Code:
-          /config preview            (see all 5 variants × 12 themes)
+          /config preview            (see all 4 variants × 12 themes)
           /config theme ocean        (try a different ladder)
           /config statusline pips    (try a different statusline shape)
         From the terminal — same backing file:

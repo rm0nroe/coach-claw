@@ -66,13 +66,50 @@ Candidate future work.
   discoverable in marketplace listings and could collide with another
   plugin's claim. Worth weighing once the plugin has real adoption
   data — current namespaced commands work, just verbose.
-- `[ ]` `/coach-claw:doctor` skill. Plugin lacks an introspection
-  surface. Doctor would surface: detected install state (plugin only,
-  npm only, both), `.plugin-deferred` / `.cli-uninstalled-by-plugin`
-  markers, statusLine entry presence + ownership, cron registration
-  state. Includes a `--remove-statusline` mode for the documented
-  uninstall-cleanup gap (Anthropic's plugin lifecycle doesn't auto-
-  clean settings.json keys plugins added).
+- `[x]` ~~`/coach-claw:doctor` skill.~~ Shipped in v0.1.3
+  (2026-05-09). Five read-only probes: plugin install (reads
+  `installed_plugins.json`), coexistence marker, statusLine ownership
+  (CLI vs plugin vs claimed), cron registration (reuses
+  `cron_check.py`), venv health (PyYAML import check). Mutating
+  `--remove-statusline` flag covers the documented uninstall-cleanup
+  gap (Anthropic's plugin lifecycle doesn't auto-clean settings.json
+  keys plugins added). 32 regression tests.
+- `[x]` ~~Wrap-mode statusline + variant tuning.~~ Shipped in v0.1.4
+  (2026-05-09). Plugin SessionStart and CLI `install.sh` auto-wrap a
+  user's claimed statusLine command — original is preserved in
+  `.statusline-wrap.json`, Coach segment appends to the user's output
+  with trailing-aware separator handling. Manual-Coach pre-flight
+  detects users (like Ryan's box) who already integrate Coach in
+  their custom script and skips wrap with a sticky opt-out marker.
+  `/coach-claw:doctor --wrap-statusline` / `--unwrap-statusline`
+  control surface. Variant cleanup: pips 10→5 segments + tier color,
+  slash adds ⚔ sigil and drops ELO, forge drops ELO, bracket
+  removed (saved configs fall through to crystal). ~78 new
+  regression tests across wrap, action module, doctor, hook,
+  self-patch, install, switch, and variants.
+- `[x]` ~~v0.1.4 teammate-review fixes.~~ Shipped in v0.1.5
+  (2026-05-09). Three findings: (high) `/coach-claw:doctor
+  --remove-statusline` was deleting `integrated-externally`
+  statuslines (Ryan-style custom scripts that internally call Coach)
+  because the safety guard at `doctor.py:413` only protected
+  `claimed`; (medium) `_build_wrapper_command` and `_desired_entry`
+  interpolated paths into command strings without `shlex.quote`,
+  breaking any CLAUDE_DIR with spaces under bash's `shell=True`;
+  (low) `install.sh` closeout banner still said "5 variants × 12
+  themes" after bracket was dropped. All four fixes shipped with
+  six new regression tests, including a `bash -c` execute guard on
+  the auto-wrap install test that would have caught the medium
+  finding pre-merge.
+- `[x]` ~~v0.1.5 teammate-review follow-up.~~ Shipped in v0.1.6
+  (2026-05-09). Same defect class as v0.1.5's medium finding,
+  third instance: `switch_to_plugin.py:_rewrite_cli_wrap_to_plugin`
+  built the rewrite-target command via raw f-string interpolation,
+  reachable when `/coach-claw:switch` runs with a CLAUDE_PLUGIN_ROOT
+  containing spaces. Missed in v0.1.5's symmetric sweep because
+  that round only audited `_build_wrapper_command` + `_desired_entry`.
+  Audited the rest of `coach/bin/` and found no other instances.
+  Two new regression tests pinning the fix (`shlex.split` round-trip
+  + `bash -c` exec guard).
 - `[ ]` Plugin marketplace beta channel. v0.1.0-beta initial release
   ships from the marketplace's `main` branch. Add a `beta` branch
   with its own `marketplace.json:name` (e.g., `coach-claw-plugins-beta`)

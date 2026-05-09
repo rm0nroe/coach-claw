@@ -101,11 +101,12 @@ def _bar(filled: int, total: int) -> str:
 
 
 def _streak_bar(streak: int, target: int = GRADUATION_STREAK_TARGET) -> str:
-    """●●●·· bar — filled dots for runs achieved, empty for remaining.
-    Matches coach-user-prompt.py:_streak_bar so the /coach status and the
-    hook's in-chat banners render the same symbol convention."""
+    """🔴🔴🔴⚪⚪ bar — red fill for earned positions, hollow white for
+    remaining. Matches coach-user-prompt.py:_streak_bar so /coach status
+    and the in-chat tip share the same glyph + color story without
+    needing ANSI in either surface."""
     streak = max(0, min(streak, target))
-    return CYAN + ("●" * streak) + RESET + GREY + ("·" * (target - streak)) + RESET
+    return "🔴" * streak + "⚪" * (target - streak)
 
 
 def main() -> int:

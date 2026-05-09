@@ -237,7 +237,7 @@ def test_ocean_returns_none_when_nothing_to_render():
 def test_ocean_grads_render_between_streak_and_levelup():
     """Pre-rendered graduation block lands BETWEEN the bespoke streak
     section and the bespoke levelup footer — the order locked in the plan."""
-    grads_default = "> 🎓⚡️ **GRADUATED: skipped search tools**  `+5 XP`\n> `●●●●●` — 5 clean Coach insights runs in a row — weakness retired."
+    grads_default = "> 🎓⚡️ **GRADUATED: skipped search tools**  `+5 XP`\n> `🔴🔴🔴🔴🔴` — 5 clean Coach insights runs in a row — weakness retired."
     out = render_celebrate_for_theme(
         "ocean",
         streak_rewards=_ocean_streak_fixture(),

@@ -881,6 +881,17 @@ def test_install_banner_includes_config_preview(tmp_path: Path) -> None:
         "banner should show a statusline-variant example "
         "(e.g. '/config statusline pips')"
     )
+    # v0.1.5 regression guard: bracket was removed in v0.1.4 so the
+    # variant count is 4. The closeout banner copy drifted and still
+    # said "5 variants × 12 themes" through v0.1.4.
+    assert "4 variants" in result.stdout, (
+        "banner must reflect the v0.1.4 variant count (4 after bracket "
+        "was dropped)"
+    )
+    assert "5 variants" not in result.stdout, (
+        "banner is using stale '5 variants' copy — bracket was removed "
+        "in v0.1.4"
+    )
 
 
 def test_install_no_seed_flag_parses_and_banner_reflects_choice(tmp_path: Path) -> None:
@@ -958,3 +969,182 @@ def test_install_creates_configure_py(tmp_path: Path) -> None:
     script = claude_dir / "coach/bin/configure.py"
     assert script.exists(), "configure.py was not installed"
     assert os.access(script, os.X_OK), "configure.py is not executable"
+
+
+# ---------------------------------------------------------------------------
+# Wrap-mode install (v0.1.4)
+# ---------------------------------------------------------------------------
+
+
+def test_install_creates_wrap_trampoline_with_substituted_python(tmp_path: Path) -> None:
+    """The CLI wrap trampoline must land in coach/, with `@PY@`
+    substituted to the resolved python3 path, and execute bit set.
+    Symmetric with default-statusline-command.sh."""
+    repo = Path(__file__).resolve().parents[2]
+    if not (repo / "install.sh").exists():
+        pytest.skip("install.sh is only present in the shareable repo checkout")
+
+    claude_dir = tmp_path / "Claude Dir"
+    result = _run_install(repo, claude_dir)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+    trampoline = claude_dir / "coach/default-statusline-wrap-command.sh"
+    assert trampoline.exists(), "default-statusline-wrap-command.sh missing"
+    assert os.access(trampoline, os.X_OK), "trampoline not executable"
+
+    contents = trampoline.read_text()
+    assert "@PY@" not in contents, "@PY@ placeholder was not substituted"
+    py = shutil.which("python3")
+    assert py is not None
+    assert py in contents, f"resolved python ({py}) not in trampoline contents"
+
+
+def test_install_preserves_wrap_markers_on_reinstall(tmp_path: Path) -> None:
+    """The preserve list must include all wrap markers — losing them on
+    reinstall would either re-wrap an unwrapped user (.statusline-wrap-disabled)
+    or wipe their saved-original (.statusline-wrap.json)."""
+    repo = Path(__file__).resolve().parents[2]
+    if not (repo / "install.sh").exists():
+        pytest.skip("install.sh is only present in the shareable repo checkout")
+
+    claude_dir = tmp_path / "Claude Dir"
+    first = _run_install(repo, claude_dir)
+    assert first.returncode == 0, first.stdout + first.stderr
+
+    coach_dir = claude_dir / "coach"
+    markers = {
+        ".statusline-wrap.json": json.dumps({"original_command": "bash /opt/x.sh"}),
+        ".statusline-wrap-disabled": json.dumps({"reason": "user-unwrapped"}),
+        ".statusline-wrap-announced": json.dumps({"created_at": "2026-05-09T00:00:00Z"}),
+        ".statusline-wrap-duplicate-detected": json.dumps({"created_at": "2026-05-09T00:00:00Z"}),
+    }
+    for name, content in markers.items():
+        (coach_dir / name).write_text(content)
+
+    second = _run_install(repo, claude_dir)
+    assert second.returncode == 0, second.stdout + second.stderr
+
+    for name, expected in markers.items():
+        path = coach_dir / name
+        assert path.exists(), (
+            f"{name} was dropped by reinstall — preserve list at "
+            f"install.sh is missing it"
+        )
+        assert path.read_text() == expected, (
+            f"{name} content mutated by reinstall: was {expected!r}, "
+            f"now {path.read_text()!r}"
+        )
+
+
+def test_install_helper_runs_before_redundant_backup_cleanup(tmp_path: Path) -> None:
+    """The wrap-if-claimed helper must invoke BEFORE the redundant-backup
+    prune in install.sh. Otherwise any settings.json mutation from the
+    helper would land outside the .bak.<ts> backup window."""
+    repo = Path(__file__).resolve().parents[2]
+    install_sh = repo / "install.sh"
+    if not install_sh.exists():
+        pytest.skip("install.sh is only present in the shareable repo checkout")
+
+    text = install_sh.read_text()
+    helper_idx = text.find("statusline_wrap_action.py")
+    cleanup_idx = text.find("settings.json unchanged — discarded redundant backup")
+    assert helper_idx > -1, "wrap helper invocation missing from install.sh"
+    assert cleanup_idx > -1, "redundant-backup-cleanup block missing"
+    assert helper_idx < cleanup_idx, (
+        "wrap-if-claimed helper must run BEFORE the redundant-backup "
+        "cleanup; ordering inverted in install.sh"
+    )
+
+
+def test_install_auto_wraps_claimed_statusline(tmp_path: Path) -> None:
+    """End-to-end: install.sh on a settings.json with a non-Coach
+    statusLine command auto-wraps it. Ryan's box scenario — except his
+    is filtered by manual-Coach pre-flight; this fixture uses an
+    unrelated script that doesn't trigger the pre-flight."""
+    repo = Path(__file__).resolve().parents[2]
+    if not (repo / "install.sh").exists():
+        pytest.skip("install.sh is only present in the shareable repo checkout")
+
+    claude_dir = tmp_path / "Claude Dir"
+    claude_dir.mkdir()
+    user_script = tmp_path / "my-line.sh"
+    user_script.write_text("#!/bin/bash\necho 'plain custom statusline'\n")
+    user_script.chmod(0o755)
+
+    settings = claude_dir / "settings.json"
+    settings.write_text(json.dumps({
+        "statusLine": {"type": "command", "command": f"bash {user_script}"},
+    }))
+
+    result = _run_install(repo, claude_dir)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+    new_cmd = json.loads(settings.read_text())["statusLine"]["command"]
+    assert "default-statusline-wrap-command.sh" in new_cmd, (
+        f"expected wrap-trampoline in command, got {new_cmd!r}"
+    )
+
+    saved = json.loads((claude_dir / "coach/.statusline-wrap.json").read_text())
+    assert saved["original_command"] == f"bash {user_script}"
+
+    # v0.1.5 regression guard: the generated statusLine.command runs
+    # under bash with shell=True (Claude Code semantics). Pre-v0.1.5,
+    # CLAUDE_DIR with spaces produced an unquoted path that bash split
+    # mid-token: `bash /tmp/.../Claude Dir/coach/...` → ENOENT on
+    # `Dir/coach/...`. shlex.quote on the trampoline path fixes it.
+    # `claude_dir` here is `tmp_path / "Claude Dir"` — exactly the
+    # fixture shape that exposes the bug.
+    bash_path = shutil.which("bash")
+    assert bash_path
+    payload = (
+        '{"model":{"display_name":"opus 4.7"},'
+        '"context_window":{"used_percentage":10}}'
+    )
+    proc = subprocess.run(
+        [bash_path, "-c", new_cmd],
+        input=payload,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=10,
+    )
+    assert proc.returncode == 0, (
+        f"generated statusLine command failed under bash -c — likely "
+        f"unquoted path with spaces.\ncommand={new_cmd!r}\n"
+        f"stderr={proc.stderr!r}"
+    )
+    assert "No such file or directory" not in proc.stderr, proc.stderr
+
+
+def test_install_wrap_helper_respects_optout_marker(tmp_path: Path) -> None:
+    """If the user previously unwrapped (sticky opt-out marker), reinstall
+    must NOT auto-rewrap them."""
+    repo = Path(__file__).resolve().parents[2]
+    if not (repo / "install.sh").exists():
+        pytest.skip("install.sh is only present in the shareable repo checkout")
+
+    claude_dir = tmp_path / "Claude Dir"
+    # Run install once so coach/ exists.
+    first = _run_install(repo, claude_dir)
+    assert first.returncode == 0, first.stdout + first.stderr
+
+    # Set up a custom statusLine and an opt-out marker.
+    user_script = tmp_path / "my-line.sh"
+    user_script.write_text("#!/bin/bash\necho 'plain'\n")
+    user_script.chmod(0o755)
+    settings = claude_dir / "settings.json"
+    data = json.loads(settings.read_text())
+    data["statusLine"] = {"type": "command", "command": f"bash {user_script}"}
+    settings.write_text(json.dumps(data))
+    (claude_dir / "coach/.statusline-wrap-disabled").write_text(json.dumps({
+        "reason": "user-unwrapped",
+    }))
+
+    second = _run_install(repo, claude_dir)
+    assert second.returncode == 0, second.stdout + second.stderr
+
+    # statusLine still points at the user's script — not auto-rewrapped
+    new_cmd = json.loads(settings.read_text())["statusLine"]["command"]
+    assert new_cmd == f"bash {user_script}", (
+        f"opt-out marker ignored — settings.json was rewrapped: {new_cmd!r}"
+    )

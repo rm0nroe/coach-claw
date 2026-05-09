@@ -25,6 +25,7 @@ import argparse
 import fcntl
 import json
 import os
+import shlex
 import sys
 import tempfile
 from datetime import datetime, timezone
@@ -40,6 +41,9 @@ COACH_STATUSLINE_MARKERS = (
     "default-statusline-command.sh",
     "default_statusline.py",
 )
+# Substring fragments identifying the wrap-shape statusLine entries.
+CLI_WRAP_TRAMPOLINE = "default-statusline-wrap-command.sh"
+PLUGIN_WRAP_SCRIPT = "statusline_wrap.py"
 
 
 def _is_cli_hook(cmd: str, plugin_root: str) -> bool:
@@ -101,8 +105,8 @@ def _strip_cli_hooks(data: dict, plugin_root: str) -> int:
 
 
 def _strip_cli_statusline(data: dict, plugin_root: str) -> bool:
-    """Remove the CLI's statusLine entry if present. Returns True if
-    removed, False if nothing to do or it was someone else's."""
+    """Remove the CLI's default statusLine entry if present. Returns True
+    if removed, False if nothing to do or it was someone else's."""
     sl = data.get("statusLine")
     if not isinstance(sl, dict):
         return False
@@ -110,6 +114,34 @@ def _strip_cli_statusline(data: dict, plugin_root: str) -> bool:
         del data["statusLine"]
         return True
     return False
+
+
+def _rewrite_cli_wrap_to_plugin(data: dict, plugin_root: str) -> bool:
+    """If the statusLine is the CLI wrap-shape trampoline AND we have a
+    plugin_root to rewrite to, replace it with the plugin wrap shape.
+    Preserves `.statusline-wrap.json` (operate on settings.json only).
+
+    Returns True when rewritten, False when nothing to do (no statusLine,
+    not a wrap shape, or already plugin shape).
+    """
+    if not plugin_root:
+        return False
+    sl = data.get("statusLine")
+    if not isinstance(sl, dict):
+        return False
+    cmd = str(sl.get("command", ""))
+    # Skip if not the CLI wrap trampoline.
+    if CLI_WRAP_TRAMPOLINE not in cmd:
+        return False
+    # Already pointing at the plugin's bin/ — leave alone.
+    if PLUGIN_WRAP_SCRIPT in cmd and plugin_root in cmd:
+        return False
+    pr = Path(plugin_root)
+    bootstrap = shlex.quote(str(pr / "bin" / "bootstrap.sh"))
+    wrap_py = shlex.quote(str(pr / "bin" / "statusline_wrap.py"))
+    new_cmd = f"{bootstrap} {wrap_py}"
+    data["statusLine"] = {"type": "command", "command": new_cmd}
+    return True
 
 
 def _atomic_write(path: Path, payload: dict) -> None:
@@ -185,9 +217,13 @@ def main(argv: list[str] | None = None) -> int:
 
     plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT", "")
     removed_hooks = _strip_cli_hooks(data, plugin_root)
-    removed_statusline = _strip_cli_statusline(data, plugin_root)
+    rewritten_wrap = _rewrite_cli_wrap_to_plugin(data, plugin_root)
+    # Wrap rewrite already mutated statusLine — don't also strip it.
+    removed_statusline = (
+        False if rewritten_wrap else _strip_cli_statusline(data, plugin_root)
+    )
 
-    if removed_hooks == 0 and not removed_statusline:
+    if removed_hooks == 0 and not removed_statusline and not rewritten_wrap:
         print("No CLI hooks or statusLine found in settings.json — nothing to do.")
         return 0
 
@@ -195,6 +231,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Would remove {removed_hooks} CLI hook entries.")
         if removed_statusline:
             print("Would remove CLI statusLine entry.")
+        if rewritten_wrap:
+            print("Would rewrite CLI wrap-statusLine to plugin wrap shape.")
         return 0
 
     _atomic_write(settings_path, data)
@@ -203,6 +241,8 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Removed {removed_hooks} CLI hook entries.")
     if removed_statusline:
         print("Removed CLI statusLine entry. Plugin will reinstall its own next session.")
+    if rewritten_wrap:
+        print("Rewrote CLI wrap-statusLine to plugin wrap shape (saved original preserved).")
     print()
     print("Plugin is now in charge. The CLI's installed files in")
     print("  ~/.claude/hooks/coach-*.py  and  ~/.claude/coach/")

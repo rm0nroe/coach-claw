@@ -100,6 +100,8 @@ LEVELUP_MARKER = COACH_DIR / ".pending_levelup"
 GRADUATION_MARKER = COACH_DIR / ".pending_graduation"
 REGRESSION_MARKER = COACH_DIR / ".pending_regression"
 STREAK_REWARD_MARKER = COACH_DIR / ".pending_streak_rewards"
+WRAP_ANNOUNCE_MARKER = COACH_DIR / ".statusline-wrap-announced"
+WRAP_DUPLICATE_MARKER = COACH_DIR / ".statusline-wrap-duplicate-detected"
 DISABLED_FLAG = COACH_DIR / ".disabled"
 TIP_STATE = COACH_DIR / ".tip_state.json"
 LOG_PATH = COACH_DIR / "log.ndjson"
@@ -448,6 +450,78 @@ def _maybe_cron_nudge_block(env: str = "terminal") -> str | None:
         return None
 
 
+def _wrap_announce_block(env: str = "terminal") -> str:
+    """One-time banner shown after auto-wrap installs the wrap shape.
+
+    Tells the user what just happened to their statusLine and how to
+    revert. Pre-rendered (no model interpolation) so the message is
+    exact across surfaces."""
+    title = "Coach wrapped your existing statusline"
+    body_lines = [
+        "Coach replaced `statusLine.command` with a wrapper that runs "
+        "your original command first, then appends the Coach segment.",
+        "Original is preserved in `~/.claude/coach/.statusline-wrap.json`.",
+        "Run `/coach-claw:doctor --unwrap-statusline` to revert.",
+    ]
+    if env == "ide":
+        body = f"🦞 **{title}**\n\n" + "\n\n".join(body_lines)
+        return _hr_frame_stack([body])
+    return (
+        f"> 🦞 **{title}**\n>\n"
+        + "\n>\n".join(f"> {line}" for line in body_lines)
+    )
+
+
+def _wrap_duplicate_block(env: str = "terminal") -> str:
+    """One-time banner shown when the runtime composer detected a Coach
+    segment already inside the original output (e.g. user's script
+    happens to render Coach internally). Suggests unwrapping to avoid
+    a double segment."""
+    title = "Coach detected duplicate segments in your statusline"
+    body_lines = [
+        "The wrapper saw what looks like a Coach segment in your "
+        "original statusline output and is suppressing the appended one.",
+        "If your custom statusline already integrates Coach, run "
+        "`/coach-claw:doctor --unwrap-statusline` to stop wrapping.",
+    ]
+    if env == "ide":
+        body = f"🦞 **{title}**\n\n" + "\n\n".join(body_lines)
+        return _hr_frame_stack([body])
+    return (
+        f"> 🦞 **{title}**\n>\n"
+        + "\n>\n".join(f"> {line}" for line in body_lines)
+    )
+
+
+def _maybe_wrap_announce_block(
+    session_key: str | None, now: datetime, env: str = "terminal",
+) -> str | None:
+    """Emit the wrap-announce banner once per session, until the
+    `.statusline-wrap-announced` marker hits its 24h TTL.
+
+    Per-session-consumed via `_read_and_consume` (mirrors
+    LEVELUP_MARKER etc.) so concurrent Claude Code sessions each see it
+    once. Failsafe — any exception returns None."""
+    try:
+        if _read_and_consume(WRAP_ANNOUNCE_MARKER, session_key, now) is None:
+            return None
+        return _wrap_announce_block(env)
+    except Exception:
+        return None
+
+
+def _maybe_wrap_duplicate_block(
+    session_key: str | None, now: datetime, env: str = "terminal",
+) -> str | None:
+    """Emit the duplicate-detected banner once per session."""
+    try:
+        if _read_and_consume(WRAP_DUPLICATE_MARKER, session_key, now) is None:
+            return None
+        return _wrap_duplicate_block(env)
+    except Exception:
+        return None
+
+
 def _hr_frame_stack(bodies: list[str]) -> str:
     """Wrap N body strings with N+1 shared `---` rules, each body
     followed by a blank line (Setext-H2 guard — without the blank line
@@ -523,7 +597,7 @@ def _streak_reward_block(rewards: list, env: str = "terminal") -> str:
         target = int(r.get("target", 5))
         xp = int(r.get("xp_awarded", 1))
         direction = r.get("direction", "negative")
-        filled = "●" * streak + "·" * max(target - streak, 0)
+        filled = _streak_bar(streak, target)
         arrow = "↑" if direction == "positive" else "↓"
         signed_xp = f"+{xp}" if direction == "positive" else f"-{xp}"
         bodies_terminal.append(
@@ -551,6 +625,7 @@ def _graduation_block(grads: list, env: str = "terminal") -> str:
     negative_sentence = (
         "5 clean Coach insights runs in a row — weakness retired."
     )
+    full_bar = _streak_bar(GRADUATION_STREAK_TARGET, GRADUATION_STREAK_TARGET)
     bodies_terminal: list[str] = []
     bodies_ide: list[str] = []
     for g in grads:
@@ -567,8 +642,8 @@ def _graduation_block(grads: list, env: str = "terminal") -> str:
             sentence = negative_sentence
             term_head = f"> 🎓⚡️ **GRADUATED: {gname}**  `+5 XP`"
             ide_head = f"🎓 **GRADUATED** ⚡ — `{gname}` · `+5 XP`"
-        bodies_terminal.append(f"{term_head}\n> `●●●●●` — {sentence}")
-        bodies_ide.append(f"{ide_head}\n`●●●●●` {sentence}")
+        bodies_terminal.append(f"{term_head}\n> `{full_bar}` — {sentence}")
+        bodies_ide.append(f"{ide_head}\n`{full_bar}` {sentence}")
     if not bodies_terminal:
         return ""
     if env == "ide":
@@ -1559,10 +1634,12 @@ def _detect_completions(
 
 
 def _streak_bar(streak: int, target: int = GRADUATION_STREAK_TARGET) -> str:
-    """ASCII streak bar: ●●●·· for 3/5. Subtle, no box-drawing chars that
-    render inconsistently across terminals."""
+    """Streak bar: 🔴🔴🔴⚪⚪ for 3/5. Emoji glyphs carry color
+    intrinsically — red fill for earned positions, hollow white for
+    remaining — so the bar reads identically in Markdown chat and in
+    /coach status without ANSI escapes."""
     streak = max(0, min(streak, target))
-    return "●" * streak + "·" * (target - streak)
+    return "🔴" * streak + "⚪" * (target - streak)
 
 
 def _completion_banner(
@@ -1688,18 +1765,12 @@ def _completion_banner(
 
 
 def _streak_stage_label(kind: str, streak: int, target: int) -> str:
-    """User-facing progress stage for ambient tip attribution."""
-    if kind == "strength":
-        if streak >= target:
-            return "🦍 strength mastered"
-        if streak >= 4:
-            return "🦾 strength locked in"
-        if streak >= 3:
-            return "🦧 strength building"
-        if streak >= 2:
-            return "🐒 strength warming up"
-        return "strength streak"
-
+    """User-facing progress stage for ambient tip attribution. Same
+    🌡️/🌶️/🔥/🏆 ladder for both weakness and strength — the kind
+    distinction lives in the tail wording (`+5 bonus` vs `+5 mastery
+    bonus`), set by `_xp_attribution()`. `kind` stays in the signature
+    so callers don't need to change."""
+    del kind  # unified ladder; both kinds render the same stage labels
     if streak >= target:
         return "🏆 mastered"
     if streak >= 4:
@@ -2197,6 +2268,12 @@ def main() -> None:
         cron_block = _maybe_cron_nudge_block(env)
         if cron_block:
             parts.append(cron_block)
+        wrap_announce = _maybe_wrap_announce_block(session_key, now, env)
+        if wrap_announce:
+            parts.append(wrap_announce)
+        wrap_duplicate = _maybe_wrap_duplicate_block(session_key, now, env)
+        if wrap_duplicate:
+            parts.append(wrap_duplicate)
 
         if not parts:
             _emit(None)

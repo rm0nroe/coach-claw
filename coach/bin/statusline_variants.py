@@ -1,4 +1,4 @@
-"""Statusline render variants — five compact one-liners that occupy the
+"""Statusline render variants — four compact one-liners that occupy the
 trailing slot in Claude Code's status row.
 
 Each variant takes a `Glyphs` payload (level index, level name, ELO,
@@ -82,61 +82,51 @@ def render_crystal(g: Glyphs) -> str:
 
 
 def render_pips(g: Glyphs) -> str:
-    """Lead with within-level progress as a 10-pip bar.
+    """Lead with within-level progress as a 5-pip bar. Filled glyphs
+    transition color with sigil tier (bronze→silver→gold→platinum→
+    diamond), so the bar visually levels up as the user does.
 
-        ●●●●●●●●○○ Virtuoso ↑15
+        ●●○○○ Virtuoso ↑15
     """
-    filled = max(0, min(10, round(g.bar_pct * 10)))
+    filled = max(0, min(5, round(g.bar_pct * 5)))
     pips = (
-        f"{ICE_SILVER}{'●' * filled}{RESET}"
-        f"{DIM_STEEL}{'○' * (10 - filled)}{RESET}"
+        f"{_sigil_color(g.sigil_tier)}{'●' * filled}{RESET}"
+        f"{DIM_STEEL}{'○' * (5 - filled)}{RESET}"
     )
     name = f"{BOLD}{ICE_SILVER}{g.name}{RESET}"
     return f"{pips} {name}{_gain(g)}"
 
 
-def render_bracket(g: Glyphs) -> str:
-    """Typographic. Level + name in brackets, ELO middle, arrow trail.
-
-        [Ⅶ Virtuoso] 1232 ↑15
-    """
-    inside = f"{BOLD}{ICE_SILVER}{to_roman(g.level)} {g.name}{RESET}"
-    bracket_open  = f"{MUTED_STEEL}[{RESET}"
-    bracket_close = f"{MUTED_STEEL}]{RESET}"
-    elo = f"{ICE_SILVER}{g.elo:04d}{RESET}"
-    return f"{bracket_open}{inside}{bracket_close} {elo}{_gain(g)}"
-
-
 def render_slash(g: Glyphs) -> str:
-    """Path-style separators, terse and dev-shell aesthetic.
+    """Path-style separators with a crossed-swords sigil, terse and
+    dev-shell aesthetic. The ⚔ glyph color tracks sigil tier (same
+    bronze→…→diamond progression as `◆` and `⚒`).
 
-        L7 / Virtuoso / 1232 ↑15
+        ⚔ L7 / Virtuoso ↑15
     """
+    sigil = f"{_sigil_color(g.sigil_tier)}⚔{RESET}"
     sep = f"{MUTED_STEEL}/{RESET}"
     lvl = f"{BOLD}{ICE_SILVER}L{g.level}{RESET}"
     name = f"{ICE_SILVER}{g.name}{RESET}"
-    elo = f"{ICE_SILVER}{g.elo:04d}{RESET}"
-    return f"{lvl} {sep} {name} {sep} {elo}{_gain(g)}"
+    return f"{sigil} {lvl} {sep} {name}{_gain(g)}"
 
 
 def render_forge(g: Glyphs) -> str:
-    """Anvil-themed sigil, name leads, level + ELO follow.
+    """Anvil-themed sigil, name leads, level follows.
 
-        ⚒ Virtuoso · L7 · 1232 ↑15
+        ⚒ Virtuoso · L7 ↑15
     """
     sigil = f"{_sigil_color(g.sigil_tier)}⚒{RESET}"
     name = f"{BOLD}{ICE_SILVER}{g.name}{RESET}"
     sep = f"{MUTED_STEEL}·{RESET}"
     lvl = f"{ICE_SILVER}L{g.level}{RESET}"
-    elo = f"{ICE_SILVER}{g.elo:04d}{RESET}"
-    return f"{sigil} {name} {sep} {lvl} {sep} {elo}{_gain(g)}"
+    return f"{sigil} {name} {sep} {lvl}{_gain(g)}"
 
 
 # === REGISTRY ============================================================
 VARIANTS: dict[str, Callable[[Glyphs], str]] = {
     "crystal": render_crystal,
     "pips":    render_pips,
-    "bracket": render_bracket,
     "slash":   render_slash,
     "forge":   render_forge,
 }

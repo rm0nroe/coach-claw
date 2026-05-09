@@ -90,12 +90,12 @@ def test_load_ignores_invalid_field_values(isolated_config):
 
 def test_get_variant_get_theme_get_elo_range_helpers(isolated_config):
     user_config.save({
-        "statusline_variant": "bracket",
+        "statusline_variant": "pips",
         "theme": "skyrim",
         "elo_min": 800,
         "elo_max": 3000,
     })
-    assert user_config.get_variant() == "bracket"
+    assert user_config.get_variant() == "pips"
     assert user_config.get_theme() == "skyrim"
     assert user_config.get_elo_range() == (800, 3000)
 

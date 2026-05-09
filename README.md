@@ -148,6 +148,15 @@ The plugin namespaces all skills under `/coach-claw:`:
 | `/coach-insights` | `/coach-claw:coach-insights` |
 | `/config` | `/coach-claw:config` |
 | _(none — npm-only)_ | `/coach-claw:switch` (flip control to plugin if both installed) |
+| _(none — npm-only)_ | `/coach-claw:doctor` (diagnose plugin state; `--remove-statusline`, `--wrap-statusline`, `--unwrap-statusline` actions) |
+
+When Claude Code starts a session and finds a custom statusline, the
+plugin auto-wraps it: your existing command keeps rendering, and the
+Coach segment appends to it. Original is preserved in
+`~/.claude/coach/.statusline-wrap.json`. Run
+`/coach-claw:doctor --unwrap-statusline` to revert (sticky — the
+plugin won't auto-rewrap). The CLI installer (`npx coach-claw install`)
+does the same wrap on a fresh box.
 
 The plugin **does not** register the daily insights cron. The first
 time you start a session under a plugin-only install, you'll see a
@@ -200,7 +209,7 @@ Inside Claude Code (slash commands):
                        the detections JSON without merging. (Also fires
                        automatically once / 7d on session start.)
 /config              statusline variant + theme + ELO range
-                       (5 variants × 12 themes — see /config preview)
+                       (4 variants × 12 themes — see /config preview)
 ```
 
 From the terminal (same backing file as `/config`):

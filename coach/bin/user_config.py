@@ -65,7 +65,7 @@ DEFAULTS: dict = {
     "elo_max": 2800,
 }
 
-VALID_VARIANTS = {"crystal", "pips", "bracket", "slash", "forge"}
+VALID_VARIANTS = {"crystal", "pips", "slash", "forge"}
 VALID_THEMES = {
     # abstract themes
     "craft", "forge", "cosmic", "ocean",

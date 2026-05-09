@@ -34,6 +34,7 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import shlex
 import sys
 import tempfile
 from pathlib import Path
@@ -42,13 +43,25 @@ from typing import Optional
 
 SETTINGS_PATH = Path.home() / ".claude" / "settings.json"
 
-# Substring markers that identify a statusLine command as Coach's. Both
-# the CLI install (coach/default-statusline-command.sh) and the plugin
-# install (bin/default_statusline.py via bootstrap.sh) are recognized,
-# so a user with both installed never gets a duplicate or overwrite.
+# Substring markers that identify a statusLine command as Coach's. The
+# default-shape markers (CLI install via default-statusline-command.sh,
+# plugin via default_statusline.py through bootstrap.sh) and the wrap-
+# shape markers (statusline_wrap.py for plugin, default-statusline-wrap-
+# command.sh for CLI) are all recognized, so a user with any combination
+# installed never gets a duplicate or overwrite.
 COACH_STATUSLINE_MARKERS = (
     "default-statusline-command.sh",
     "default_statusline.py",
+    "statusline_wrap.py",
+    "default-statusline-wrap-command.sh",
+)
+
+# Subset of the markers above that identify the WRAP shape specifically.
+# Lets `ensure_statusline_installed` route ours-wrapped through a path-
+# freshness refresh instead of the simple matched no-op.
+_WRAP_STATUSLINE_MARKERS = (
+    "statusline_wrap.py",
+    "default-statusline-wrap-command.sh",
 )
 
 
@@ -59,6 +72,13 @@ def _is_coach_statusline(entry) -> bool:
     return any(m in cmd for m in COACH_STATUSLINE_MARKERS)
 
 
+def _is_wrap_statusline(entry) -> bool:
+    if not isinstance(entry, dict):
+        return False
+    cmd = str(entry.get("command", ""))
+    return any(m in cmd for m in _WRAP_STATUSLINE_MARKERS)
+
+
 def _desired_entry(plugin_root: Path) -> dict:
     """Build the statusLine entry for the plugin distribution.
 
@@ -67,8 +87,8 @@ def _desired_entry(plugin_root: Path) -> dict:
     imports user_config.py which doesn't need yaml directly, but
     keeping a single entry pattern simplifies the model).
     """
-    bootstrap = plugin_root / "bin" / "bootstrap.sh"
-    statusline_py = plugin_root / "bin" / "default_statusline.py"
+    bootstrap = shlex.quote(str(plugin_root / "bin" / "bootstrap.sh"))
+    statusline_py = shlex.quote(str(plugin_root / "bin" / "default_statusline.py"))
     return {
         "type": "command",
         "command": f"{bootstrap} {statusline_py}",
@@ -110,12 +130,18 @@ def ensure_statusline_installed(
     """Idempotently set Coach's statusLine in `settings_path`.
 
     Returns one of:
-        "installed" — wrote a new entry (was absent).
-        "matched"   — already present and ours; no write.
-        "claimed"   — present pointing at someone else; no write.
-        "skipped"   — settings.json doesn't exist (very fresh user;
-                       Claude Code creates it on first run).
-        "error"     — exception during read/write (always fail-soft).
+        "installed"      — wrote a new entry (was absent).
+        "matched"        — already present and ours; no write.
+        "wrap-refreshed" — ours-wrapped with stale plugin path; rewrote
+                           with current ${CLAUDE_PLUGIN_ROOT}.
+        "wrapped"        — auto-wrapped a user's claimed statusline so
+                           the Coach segment now appends to it.
+        "claimed"        — present pointing at someone else AND auto-
+                           wrap was suppressed (opt-out marker or manual
+                           Coach integration detected).
+        "skipped"        — settings.json doesn't exist (very fresh user;
+                           Claude Code creates it on first run).
+        "error"          — exception during read/write (always fail-soft).
 
     `settings_path` defaults to ~/.claude/settings.json; tests pass a
     tmpdir path.
@@ -128,23 +154,50 @@ def ensure_statusline_installed(
         try:
             data = json.loads(target.read_text())
         except json.JSONDecodeError:
-            # Malformed settings.json — don't try to fix it from here.
             return "error"
         if not isinstance(data, dict):
             return "error"
 
+        plugin_root_p = Path(plugin_root).resolve()
         existing = data.get("statusLine")
         if existing:
+            # Wrap shape — delegate to the action module so path-freshness
+            # refresh and idempotency live in one place.
+            if _is_wrap_statusline(existing):
+                try:
+                    import statusline_wrap_action as wa  # noqa: WPS433
+                    res = wa.wrap(
+                        settings_path=target,
+                        plugin_root=plugin_root_p,
+                    )
+                except Exception:
+                    return "matched"  # fail-soft; no rewrite happened
+                if res.get("reason") == "refreshed-path":
+                    return "wrap-refreshed"
+                return "matched"
             if _is_coach_statusline(existing):
                 return "matched"
+
+            # Claimed: auto-wrap on first encounter, unless opted out or
+            # manual-Coach integration detected. wrap_action.wrap()
+            # handles both gates internally and falls through to a wrap
+            # mutation on success.
+            try:
+                import statusline_wrap_action as wa  # noqa: WPS433
+                res = wa.wrap(
+                    settings_path=target,
+                    plugin_root=plugin_root_p,
+                )
+            except Exception:
+                res = {"result": "error"}
+            if res.get("result") == "wrapped":
+                return "wrapped"
             sys.stderr.write(
-                "coach-claw plugin: settings.json already has a "
-                "statusLine command from another source; leaving it "
+                "coach-claw plugin: settings.json statusLine left "
                 "untouched. Run /coach-claw:doctor to inspect.\n"
             )
             return "claimed"
 
-        plugin_root_p = Path(plugin_root).resolve()
         data["statusLine"] = _desired_entry(plugin_root_p)
         _atomic_write(target, data)
         return "installed"

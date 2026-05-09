@@ -178,7 +178,7 @@ def test_streak_reward_terminal_negative(cup):
           "direction": "negative", "streak": 3, "target": 5, "xp_awarded": 1}],
         env="terminal",
     )
-    expected = "> ↓ `edits without testing` `●●●··` 3/5 · `-1`"
+    expected = "> ↓ `edits without testing` `🔴🔴🔴⚪⚪` 3/5 · `-1`"
     assert expected in block
     assert "↑" not in block
     assert "edits-without-testing" not in block  # slug must not leak
@@ -191,7 +191,7 @@ def test_streak_reward_terminal_positive(cup):
           "direction": "positive", "streak": 4, "target": 5, "xp_awarded": 2}],
         env="terminal",
     )
-    expected = "> ↑ `safe git hygiene` `●●●●·` 4/5 · `+2`"
+    expected = "> ↑ `safe git hygiene` `🔴🔴🔴🔴⚪` 4/5 · `+2`"
     assert expected in block
     assert "↓" not in block
 
@@ -202,7 +202,7 @@ def test_streak_reward_ide_negative(cup):
           "direction": "negative", "streak": 3, "target": 5, "xp_awarded": 1}],
         env="ide",
     )
-    expected = "↓ `edits without testing` · `●●●·· 3/5` · `-1`"
+    expected = "↓ `edits without testing` · `🔴🔴🔴⚪⚪ 3/5` · `-1`"
     assert expected in block
     assert "↑" not in block
     assert block.startswith("---\n")
@@ -216,7 +216,7 @@ def test_streak_reward_ide_positive(cup):
           "direction": "positive", "streak": 4, "target": 5, "xp_awarded": 2}],
         env="ide",
     )
-    expected = "↑ `safe git hygiene` · `●●●●· 4/5` · `+2`"
+    expected = "↑ `safe git hygiene` · `🔴🔴🔴🔴⚪ 4/5` · `+2`"
     assert expected in block
     assert "↓" not in block
 
@@ -326,7 +326,7 @@ def test_completion_banner_ide_weakness(cup):
     assert "  ---" in block
     assert "✅ **Tip cleared** — `edits-without-testing`" in block
     assert "`+2 XP banked`" in block
-    assert "`streak ●●··· advances next /coach-insights`" in block
+    assert "`streak 🔴🔴⚪⚪⚪ advances next /coach-insights`" in block
 
 
 def test_completion_banner_ide_strength(cup):
@@ -340,7 +340,7 @@ def test_completion_banner_ide_strength(cup):
     )
     assert "  ---" in block
     assert "💪 **Strength reinforced** — `tests-after-edits`" in block
-    assert "`strength streak ●●···`" in block
+    assert "`strength streak 🔴🔴⚪⚪⚪`" in block
 
 
 # -----------------------------------------------------------------------------

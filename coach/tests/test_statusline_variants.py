@@ -42,24 +42,53 @@ def test_default_variant_is_crystal_and_includes_canonical_glyphs():
 
 def test_pips_variant_renders_pip_bar():
     plain = _strip_ansi(sv.render("pips", _sample_glyphs()))
-    # bar_pct=0.30 → 3 filled pips, 7 empty
-    assert plain.startswith("●●●○○○○○○○ Virtuoso")
+    # bar_pct=0.30 → round(0.30*5) = 2 filled pips, 3 empty
+    assert plain.startswith("●●○○○ Virtuoso")
     assert plain.endswith("↑15")
 
 
-def test_bracket_variant_uses_brackets_and_contains_name_elo():
-    plain = _strip_ansi(sv.render("bracket", _sample_glyphs()))
-    assert plain == "[Ⅶ Virtuoso] 1232 ↑15"
+def _glyphs_with_tier(tier: str) -> sv.Glyphs:
+    base = _sample_glyphs()
+    return sv.Glyphs(
+        level=base.level, name=base.name, elo=base.elo,
+        session_xp=base.session_xp, sigil_tier=tier, bar_pct=base.bar_pct,
+    )
 
 
-def test_slash_variant_uses_path_separators():
+def test_pips_filled_glyph_color_tracks_sigil_tier():
+    """Filled `●` glyphs render in the sigil-tier color so the bar
+    progresses bronze → silver → gold → platinum → diamond as the user
+    levels up. Empty `○` glyphs stay DIM_STEEL."""
+    bronze_out = sv.render("pips", _glyphs_with_tier("bronze"))
+    diamond_out = sv.render("pips", _glyphs_with_tier("diamond"))
+    assert sv.SIGIL_COLORS["bronze"] in bronze_out
+    assert sv.SIGIL_COLORS["diamond"] in diamond_out
+    assert bronze_out != diamond_out
+
+
+def test_slash_variant_has_swords_sigil_and_drops_elo():
     plain = _strip_ansi(sv.render("slash", _sample_glyphs()))
-    assert plain == "L7 / Virtuoso / 1232 ↑15"
+    assert plain == "⚔ L7 / Virtuoso ↑15"
+
+
+def test_slash_sigil_color_tracks_sigil_tier():
+    """⚔ joins ◆ and ⚒ in the tier-color family — same mechanism."""
+    out = sv.render("slash", _glyphs_with_tier("diamond"))
+    assert sv.SIGIL_COLORS["diamond"] in out
 
 
 def test_forge_variant_uses_anvil_sigil():
     plain = _strip_ansi(sv.render("forge", _sample_glyphs()))
-    assert plain == "⚒ Virtuoso · L7 · 1232 ↑15"
+    assert plain == "⚒ Virtuoso · L7 ↑15"
+
+
+def test_bracket_variant_removed_from_registry():
+    """v0.1.4: bracket dropped. `render()` falls back to crystal so
+    saved configs with statusline_variant=bracket keep rendering."""
+    assert "bracket" not in sv.VARIANTS
+    assert len(sv.VARIANTS) == 4
+    fallback = sv.render("bracket", _sample_glyphs())
+    assert fallback == sv.render("crystal", _sample_glyphs())
 
 
 def test_zero_session_xp_drops_the_arrow():

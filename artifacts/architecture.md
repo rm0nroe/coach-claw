@@ -334,7 +334,7 @@ matching install location.
 Comprehensive state breakdown. Imports `LEVELS` from `stats.py` (single
 source of truth for the ladder). Renders lifetime breakdown, session
 breakdown, weakness/strength tables with per-pattern streak bars
-(`●●●·· 3/5`) sorted descending by streak, and a tail of the last
+(`🔴🔴🔴⚪⚪ 3/5`) sorted descending by streak, and a tail of the last
 `/coach-insights` run.
 
 ### `coach/bin/skill_inventory.py` — installed-skills scan
@@ -549,7 +549,7 @@ Deterministic tip scheduler. On every `UserPromptSubmit`:
    with `MIN_SKILL_SHARE=0.25` floor
 6. Pre-compute reward attribution lines, env-shaped: terminal returns
    italic lines (`_↑ +N …_` + separate staged streak line such as
-   `_🌡️ warming up …_` / `_🦍 strength mastered …_`); IDE returns
+   `_🌡️ warming up …_` / `_🏆 mastered …_`); IDE returns
    inline-code-span pills with the same content.
    Skill labels carry the 🦞 Coach Claw persona; weakness/strength labels
    are plain `*Tip:* / *Pointer:* / …` in terminal, `🦞 **Tip** / …` in

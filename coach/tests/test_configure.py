@@ -115,9 +115,12 @@ def test_preview_lists_every_variant(isolated_config, capsys):
     rc = configure.main(["preview"])
     assert rc == 0
     out = capsys.readouterr().out
-    # Every variant key must appear
-    for variant in ["crystal", "pips", "bracket", "slash", "forge"]:
+    # Every variant key must appear (bracket removed in v0.1.4).
+    for variant in ["crystal", "pips", "slash", "forge"]:
         assert variant in out
+    # Regression guard: bracket was removed and must not reappear in
+    # the preview enumeration.
+    assert "bracket" not in out
 
 
 def test_preview_lists_every_theme(isolated_config, capsys):
