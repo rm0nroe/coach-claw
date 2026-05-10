@@ -36,6 +36,7 @@ PROJECTS = Path.home() / ".claude" / "projects"
 from stats import LEVELS as _STATS_LEVELS  # type: ignore  # noqa: E402
 from scoring import score_transcript_with_breakdown  # type: ignore  # noqa: E402
 from xp_accounting import normalize_profile_xp  # type: ignore  # noqa: E402
+from display_names import display_name  # type: ignore  # noqa: E402
 LEVELS = _STATS_LEVELS
 
 SESSION_XP_CAP = 15
@@ -100,13 +101,19 @@ def _bar(filled: int, total: int) -> str:
     return CYAN + "[" + ("▰" * filled) + RESET + GREY + ("▱" * (total - filled)) + RESET + CYAN + "]" + RESET
 
 
-def _streak_bar(streak: int, target: int = GRADUATION_STREAK_TARGET) -> str:
-    """🔴🔴🔴⚪⚪ bar — red fill for earned positions, hollow white for
-    remaining. Matches coach-user-prompt.py:_streak_bar so /coach status
-    and the in-chat tip share the same glyph + color story without
-    needing ANSI in either surface."""
+def _streak_bar(
+    streak: int,
+    target: int = GRADUATION_STREAK_TARGET,
+    *,
+    fill_glyph: str = "🟢",
+    empty_glyph: str = "⚪",
+) -> str:
+    """🟢🟢🟢⚪⚪ bar for /coach status rows — green fill = baseline
+    progress display. Mirrors coach-user-prompt.py:_streak_bar's signature
+    (kwargs for color override) but defaults to green here since /coach
+    status only ever renders the baseline (non-attribution) shape."""
     streak = max(0, min(streak, target))
-    return "🔴" * streak + "⚪" * (target - streak)
+    return fill_glyph * streak + empty_glyph * (target - streak)
 
 
 def main() -> int:
@@ -239,12 +246,13 @@ def main() -> int:
         )
         for e in weaknesses_sorted[:5]:
             eid = e.get("id", "?")
+            display = display_name(eid, profile) if eid != "?" else eid
             streak = int(e.get("clean_streak_runs", 0) or 0)
             tier = e.get("tier", "?")
             bar = _streak_bar(streak)
             label = "graduates" if streak >= GRADUATION_STREAK_TARGET else "to graduation"
             print(
-                f"    {GREY}·{RESET} {eid}  {bar} {CYAN}{streak}/{GRADUATION_STREAK_TARGET}{RESET} "
+                f"    {GREY}·{RESET} {display}  {bar} {CYAN}{streak}/{GRADUATION_STREAK_TARGET}{RESET} "
                 f"{GREY}({tier} · {label}){RESET}"
             )
         if len(weaknesses) > 5:
@@ -265,12 +273,13 @@ def main() -> int:
         )
         for e in strengths_sorted[:5]:
             eid = e.get("id", "?")
+            display = display_name(eid, profile) if eid != "?" else eid
             streak = int(e.get("positive_run_streak", 0) or 0)
             tier = e.get("tier", "?")
             bar = _streak_bar(streak)
             label = "masters" if streak >= GRADUATION_STREAK_TARGET else "to mastery"
             print(
-                f"    {GREY}·{RESET} {eid}  {bar} {CYAN}{streak}/{GRADUATION_STREAK_TARGET}{RESET} "
+                f"    {GREY}·{RESET} {display}  {bar} {CYAN}{streak}/{GRADUATION_STREAK_TARGET}{RESET} "
                 f"{GREY}({tier} · {label}){RESET}"
             )
         if len(strengths) > 5:

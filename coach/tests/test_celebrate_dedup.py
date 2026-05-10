@@ -383,12 +383,16 @@ def test_celebrate_block_includes_verbatim_instruction(cup, now):
 def test_celebrate_combines_all_event_kinds(cup, now):
     """Regression + streak + graduation + level-up — verify ordering and
     that all four sections are present without bleeding into each other."""
+    # Use slug-form ids whose humanized fallback (`-` → space) matches
+    # the asserted display text. display_name() is now the single
+    # source of truth — marker `name` is ignored, so synthetic ids
+    # without an override render via humanized-slug fallback.
     block = cup._assemble_celebrate_block(
-        grads=[{"id": "g1", "name": "pattern g", "direction": "positive",
+        grads=[{"id": "pattern-g", "name": "pattern g", "direction": "positive",
                 "graduated_reason": "present-5-runs"}],
-        regs=[{"id": "r1", "name": "pattern r",
+        regs=[{"id": "pattern-r", "name": "pattern r",
                "originally_graduated_at": "2026-04-01"}],
-        streak_rewards=[{"id": "s1", "name": "pattern s",
+        streak_rewards=[{"id": "pattern-s", "name": "pattern s",
                          "direction": "negative", "streak": 2, "target": 5,
                          "xp_awarded": 1}],
         levelup={"from": "L3 X", "to": "Y", "to_idx": 3, "xp_at_levelup": 100},

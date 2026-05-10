@@ -225,6 +225,37 @@ SPECS: dict[str, dict] = {
 }
 
 
+# -----------------------------------------------------------------------------
+# Per-theme labels for the tip-complete ack banners (B9). Every theme gets
+# its own pair — `tip_cleared` (weakness completion ack) and
+# `strength_reinforced` (strength completion ack). Default theme `craft`
+# keeps the original wording so existing tests and behavior don't shift.
+# Picked to match each theme's voice; 2-word phrases for visual parity with
+# the originals; no emoji prefix so the leading ✅/💪 stays the visual
+# signature.
+COMPLETION_LABELS: dict[str, dict[str, str]] = {
+    "craft":        {"tip_cleared": "Tip cleared",         "strength_reinforced": "Strength reinforced"},
+    "forge":        {"tip_cleared": "Iron struck",         "strength_reinforced": "Edge sharpened"},
+    "cosmic":       {"tip_cleared": "Course corrected",    "strength_reinforced": "Constellation drawn"},
+    "ocean":        {"tip_cleared": "Wave caught",         "strength_reinforced": "Tide carries"},
+    "skyrim":       {"tip_cleared": "Quest cleared",       "strength_reinforced": "Skill mastered"},
+    "marvel":       {"tip_cleared": "Threat neutralized",  "strength_reinforced": "Power harnessed"},
+    "dc":           {"tip_cleared": "Watch kept",          "strength_reinforced": "Beacon answered"},
+    "finalfantasy": {"tip_cleared": "Encounter cleared",   "strength_reinforced": "Stat boosted"},
+    "military":     {"tip_cleared": "Mission accomplished","strength_reinforced": "Drill burned in"},
+    "lotr":         {"tip_cleared": "Burden lightened",    "strength_reinforced": "Heart steadfast"},
+    "starwars":     {"tip_cleared": "Order kept",          "strength_reinforced": "Force grows"},
+    "hacker":       {"tip_cleared": "Exploit landed",      "strength_reinforced": "Pattern indexed"},
+}
+
+
+def completion_labels(theme: str) -> dict[str, str]:
+    """Return per-theme labels for the tip-complete ack banners. Falls
+    back to the `craft` defaults for unknown themes so future theme
+    additions don't crash banner rendering."""
+    return COMPLETION_LABELS.get(theme) or COMPLETION_LABELS["craft"]
+
+
 def _resolve_spec(theme: str, dual_blade_supported: bool) -> dict:
     """Apply glyph fallbacks to the spec for the active theme + terminal.
     Returns a plain dict — callers must not mutate the SPECS source."""

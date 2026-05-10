@@ -18,6 +18,8 @@ import banner_themes
 import stats
 from banner_themes import (
     BESPOKE_THEMES,
+    COMPLETION_LABELS,
+    completion_labels,
     render_celebrate_for_theme,
     _render_verb_style,
     _format_window_phrase,
@@ -237,7 +239,7 @@ def test_ocean_returns_none_when_nothing_to_render():
 def test_ocean_grads_render_between_streak_and_levelup():
     """Pre-rendered graduation block lands BETWEEN the bespoke streak
     section and the bespoke levelup footer — the order locked in the plan."""
-    grads_default = "> 🎓⚡️ **GRADUATED: skipped search tools**  `+5 XP`\n> `🔴🔴🔴🔴🔴` — 5 clean Coach insights runs in a row — weakness retired."
+    grads_default = "> 🎓⚡️ **GRADUATED: skipped search tools**  `+5 XP`\n> `🟡🟡🟡🟡🟡` — 5 clean Coach insights runs in a row — weakness retired."
     out = render_celebrate_for_theme(
         "ocean",
         streak_rewards=_ocean_streak_fixture(),
@@ -979,3 +981,45 @@ def test_hacker_l50_uses_root_access_line():
     assert out is not None
     assert "root access 🔓 max layer reached" in out
     assert "next breach 🔓 0" not in out
+
+
+# -----------------------------------------------------------------------------
+# Per-theme completion labels (B9 ack banners): each of the 12 themes
+# carries its own pair (`tip_cleared`, `strength_reinforced`). Default
+# `craft` keeps the original wording so existing fixtures don't shift.
+# -----------------------------------------------------------------------------
+
+def test_completion_labels_all_twelve_themes_present():
+    """Every theme name registered in stats has a label entry, so the
+    /config theme picker can never land on a theme without an ack banner."""
+    expected = {
+        "craft", "forge", "cosmic", "ocean", "skyrim", "marvel",
+        "dc", "finalfantasy", "military", "lotr", "starwars", "hacker",
+    }
+    assert set(COMPLETION_LABELS.keys()) == expected
+    for theme, labels in COMPLETION_LABELS.items():
+        assert "tip_cleared" in labels, f"{theme} missing tip_cleared"
+        assert "strength_reinforced" in labels, f"{theme} missing strength_reinforced"
+
+
+def test_completion_labels_craft_is_default_wording():
+    """craft preserves the original strings — tests pinning literal
+    'Tip cleared' / 'Strength reinforced' must keep passing."""
+    assert completion_labels("craft") == {
+        "tip_cleared": "Tip cleared",
+        "strength_reinforced": "Strength reinforced",
+    }
+
+
+def test_completion_labels_themed_examples():
+    """Spot check three distinct themes to lock in the proposed wording."""
+    assert completion_labels("military")["tip_cleared"] == "Mission accomplished"
+    assert completion_labels("hacker")["tip_cleared"] == "Exploit landed"
+    assert completion_labels("ocean")["strength_reinforced"] == "Tide carries"
+
+
+def test_completion_labels_unknown_theme_falls_back_to_craft():
+    """Unknown / future theme names return the craft defaults so banner
+    rendering never crashes on a missing key."""
+    assert completion_labels("not-a-real-theme") == COMPLETION_LABELS["craft"]
+    assert completion_labels("") == COMPLETION_LABELS["craft"]

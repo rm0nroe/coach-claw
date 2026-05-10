@@ -146,9 +146,10 @@ def test_regression_terminal_uses_blockquote(cup):
           "originally_graduated_at": "2026-04-01"}],
         env="terminal",
     )
-    # Verbatim banner: name (not slug) appears in the heading; the
-    # graduation date is interpolated into the body sentence.
-    assert "> ⚠️ **Regressed: Edits without testing**" in block
+    # Verbatim banner: display_name override wins over marker name, so
+    # the heading shows the curated wording. Graduation date is
+    # interpolated into the body sentence.
+    assert "> ⚠️ **Regressed: edits without testing**" in block
     assert "(was graduated 2026-04-01)" in block
     assert "edits-without-testing" not in block  # slug must not leak
     assert "---" not in block
@@ -160,7 +161,7 @@ def test_regression_ide_uses_hr_frame(cup):
           "originally_graduated_at": "2026-04-01"}],
         env="ide",
     )
-    assert "⚠️ **Regressed** — `Edits without testing`" in block
+    assert "⚠️ **Regressed** — `edits without testing`" in block
     assert "edits-without-testing" not in block  # slug must not leak
     assert block.startswith("---\n")
     assert block.endswith("\n---")
@@ -178,7 +179,7 @@ def test_streak_reward_terminal_negative(cup):
           "direction": "negative", "streak": 3, "target": 5, "xp_awarded": 1}],
         env="terminal",
     )
-    expected = "> ↓ `edits without testing` `🔴🔴🔴⚪⚪` 3/5 · `-1`"
+    expected = "> ↓ `edits without testing` `🟢🟢🟢⚪⚪` 3/5 · `-1`"
     assert expected in block
     assert "↑" not in block
     assert "edits-without-testing" not in block  # slug must not leak
@@ -191,7 +192,7 @@ def test_streak_reward_terminal_positive(cup):
           "direction": "positive", "streak": 4, "target": 5, "xp_awarded": 2}],
         env="terminal",
     )
-    expected = "> ↑ `safe git hygiene` `🔴🔴🔴🔴⚪` 4/5 · `+2`"
+    expected = "> ↑ `safe git hygiene` `🟢🟢🟢🟢⚪` 4/5 · `+2`"
     assert expected in block
     assert "↓" not in block
 
@@ -202,7 +203,7 @@ def test_streak_reward_ide_negative(cup):
           "direction": "negative", "streak": 3, "target": 5, "xp_awarded": 1}],
         env="ide",
     )
-    expected = "↓ `edits without testing` · `🔴🔴🔴⚪⚪ 3/5` · `-1`"
+    expected = "↓ `edits without testing` · `🟢🟢🟢⚪⚪ 3/5` · `-1`"
     assert expected in block
     assert "↑" not in block
     assert block.startswith("---\n")
@@ -216,7 +217,7 @@ def test_streak_reward_ide_positive(cup):
           "direction": "positive", "streak": 4, "target": 5, "xp_awarded": 2}],
         env="ide",
     )
-    expected = "↑ `safe git hygiene` · `🔴🔴🔴🔴⚪ 4/5` · `+2`"
+    expected = "↑ `safe git hygiene` · `🟢🟢🟢🟢⚪ 4/5` · `+2`"
     assert expected in block
     assert "↓" not in block
 
@@ -286,6 +287,75 @@ def test_graduation_ide_positive(cup):
 
 
 # -----------------------------------------------------------------------------
+# Graduation full-bar color: yellow for GRADUATED ⚡️ (negative-direction,
+# weakness retired), black for MASTERED 🌟 (positive-direction, strength
+# locked in). The streak ladder ⚪/🔴 is reserved for active mid-streak
+# attribution — graduation ceremonies get bespoke colors.
+# -----------------------------------------------------------------------------
+
+def test_curated_override_wins_over_marker_name(cup):
+    """Regression: when a marker carries a `name` that differs from the
+    curated WORDING_OVERRIDES entry for that slug, the override MUST win.
+    The teammate-found bug was the milestone renderers preferring marker
+    name over display_name's resolution chain — defeating the natural-
+    language override contract for known awkward phrases."""
+    # `commit-without-testing` carries marker name "commit without
+    # testing" (analyze.py:350), but the curated override is the richer
+    # "committing without testing".
+    streak_block = cup._streak_reward_block(
+        [{"id": "commit-without-testing", "name": "commit without testing",
+          "direction": "negative", "streak": 3, "target": 5, "xp_awarded": 1}],
+        env="terminal",
+    )
+    assert "committing without testing" in streak_block, (
+        "streak reward banner ignored the curated override"
+    )
+    assert "`commit without testing`" not in streak_block, (
+        "marker name leaked through despite override match"
+    )
+
+    grad_block = cup._graduation_block(
+        [{"id": "commit-without-testing", "name": "commit without testing",
+          "direction": "negative", "graduated_reason": "absent-5-runs"}],
+        env="terminal",
+    )
+    assert "GRADUATED: committing without testing" in grad_block, (
+        "graduation banner ignored the curated override"
+    )
+
+    reg_block = cup._regression_block(
+        [{"id": "commit-without-testing", "name": "commit without testing",
+          "originally_graduated_at": "2026-04-01"}],
+        env="terminal",
+    )
+    assert "Regressed: committing without testing" in reg_block, (
+        "regression banner ignored the curated override"
+    )
+
+
+def test_graduation_negative_full_bar_is_yellow(cup):
+    block = cup._graduation_block(
+        [{"id": "edits-without-testing", "name": "edits without testing",
+          "direction": "negative", "graduated_reason": "absent-5-runs"}],
+        env="terminal",
+    )
+    assert "🟡🟡🟡🟡🟡" in block
+    assert "🔴" not in block  # red is the streak ladder, not the ceremony
+    assert "⚫" not in block  # black is reserved for MASTERED
+
+
+def test_graduation_positive_full_bar_is_black(cup):
+    block = cup._graduation_block(
+        [{"id": "tests-after-edits", "name": "tests after edits",
+          "direction": "positive", "graduated_reason": "present-5-runs"}],
+        env="terminal",
+    )
+    assert "⚫️⚫️⚫️⚫️⚫️" in block
+    assert "🔴" not in block
+    assert "🟡" not in block  # yellow is reserved for GRADUATED
+
+
+# -----------------------------------------------------------------------------
 # _completion_banner — terminal vs IDE, all kinds
 # -----------------------------------------------------------------------------
 
@@ -324,9 +394,10 @@ def test_completion_banner_ide_weakness(cup):
         env="ide",
     )
     assert "  ---" in block
-    assert "✅ **Tip cleared** — `edits-without-testing`" in block
+    assert "✅ **Tip cleared** — `edits without testing`" in block
+    assert "edits-without-testing" not in block  # slug must not leak
     assert "`+2 XP banked`" in block
-    assert "`streak 🔴🔴⚪⚪⚪ advances next /coach-insights`" in block
+    assert "`streak 🟢🟢⚪⚪⚪ advances next /coach-insights`" in block
 
 
 def test_completion_banner_ide_strength(cup):
@@ -339,8 +410,9 @@ def test_completion_banner_ide_strength(cup):
         env="ide",
     )
     assert "  ---" in block
-    assert "💪 **Strength reinforced** — `tests-after-edits`" in block
-    assert "`strength streak 🔴🔴⚪⚪⚪`" in block
+    assert "💪 **Strength reinforced** — `testing after edits`" in block
+    assert "tests-after-edits" not in block  # slug must not leak
+    assert "`strength streak 🟢🟢⚪⚪⚪`" in block
 
 
 # -----------------------------------------------------------------------------

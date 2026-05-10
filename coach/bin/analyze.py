@@ -292,7 +292,7 @@ def aggregate(sessions: list[dict]) -> tuple[list[dict], dict]:
     if len(under_plan) >= 3:
         detections.append({
             "id": "under-planning",
-            "name": "under-planning",
+            "name": "thin planning",
             "nudge": (
                 f"Across {len(under_plan)} of {n} recent sessions, editing "
                 "started within 2 minutes of the first user turn with no "

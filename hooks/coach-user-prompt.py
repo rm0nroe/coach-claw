@@ -95,6 +95,13 @@ try:
 except Exception:
     def _get_theme():  # type: ignore[no-redef]
         return "craft"
+try:
+    from display_names import display_name as _display_name  # noqa: E402
+except Exception:
+    def _display_name(entry_id, profile=None):  # type: ignore[no-redef]
+        if not entry_id:
+            return entry_id
+        return entry_id.replace("-", " ")
 PROFILE = COACH_DIR / "profile.yaml"
 LEVELUP_MARKER = COACH_DIR / ".pending_levelup"
 GRADUATION_MARKER = COACH_DIR / ".pending_graduation"
@@ -555,7 +562,9 @@ def _levelup_block(data: dict, env: str = "terminal") -> str:
     )
 
 
-def _regression_block(regs: list, env: str = "terminal") -> str:
+def _regression_block(
+    regs: list, env: str = "terminal", profile: dict | None = None
+) -> str:
     """Pre-rendered regression banners. One per dict, stacked.
     Body is templated — name and originally_graduated_at are
     substituted, no model-filled sentence."""
@@ -565,7 +574,11 @@ def _regression_block(regs: list, env: str = "terminal") -> str:
         if not isinstance(r, dict):
             continue
         rid = r.get("id", "?")
-        rname = r.get("name") or rid
+        # display_name is the single source of truth: curated override →
+        # profile.name → humanized slug. Marker name is intentionally
+        # ignored here so a curated WORDING_OVERRIDES entry always wins
+        # over whatever wording the marker happened to carry at write time.
+        rname = _display_name(rid, profile) if rid != "?" else rid
         originally_at = r.get("originally_graduated_at", "?")
         sentence = (
             f"Re-detected this run, so it's off the mastered list "
@@ -582,7 +595,9 @@ def _regression_block(regs: list, env: str = "terminal") -> str:
     return "\n\n".join(bodies_terminal)
 
 
-def _streak_reward_block(rewards: list, env: str = "terminal") -> str:
+def _streak_reward_block(
+    rewards: list, env: str = "terminal", profile: dict | None = None
+) -> str:
     """Pre-rendered mid-streak reward banners. Small wins — tighter than
     graduations so they feel like dopamine pulses, not ceremonies.
     Direction-aware glyph: positive→↑, negative→↓."""
@@ -592,12 +607,15 @@ def _streak_reward_block(rewards: list, env: str = "terminal") -> str:
         if not isinstance(r, dict):
             continue
         rid = r.get("id", "?")
-        rname = r.get("name") or rid
+        # See _regression_block: display_name is authoritative; the
+        # marker's `name` field is intentionally ignored so curated
+        # overrides win over whatever the marker carried at write time.
+        rname = _display_name(rid, profile) if rid != "?" else rid
         streak = int(r.get("streak", 0))
         target = int(r.get("target", 5))
         xp = int(r.get("xp_awarded", 1))
         direction = r.get("direction", "negative")
-        filled = _streak_bar(streak, target)
+        filled = _streak_bar(streak, target, fill_glyph="🟢")
         arrow = "↑" if direction == "positive" else "↓"
         signed_xp = f"+{xp}" if direction == "positive" else f"-{xp}"
         bodies_terminal.append(
@@ -614,7 +632,9 @@ def _streak_reward_block(rewards: list, env: str = "terminal") -> str:
     return "\n".join(bodies_terminal)
 
 
-def _graduation_block(grads: list, env: str = "terminal") -> str:
+def _graduation_block(
+    grads: list, env: str = "terminal", profile: dict | None = None
+) -> str:
     """Pre-rendered graduation banners. Direction-picked in Python:
     positive→MASTERED 🌟, negative→GRADUATED ⚡️. Body sentence is
     templated, not model-filled."""
@@ -625,23 +645,35 @@ def _graduation_block(grads: list, env: str = "terminal") -> str:
     negative_sentence = (
         "5 clean Coach insights runs in a row — weakness retired."
     )
-    full_bar = _streak_bar(GRADUATION_STREAK_TARGET, GRADUATION_STREAK_TARGET)
     bodies_terminal: list[str] = []
     bodies_ide: list[str] = []
     for g in grads:
         if not isinstance(g, dict):
             continue
         gid = g.get("id", "?")
-        gname = g.get("name") or gid
+        # See _regression_block: display_name is authoritative; the
+        # marker's `name` field is intentionally ignored so curated
+        # overrides win over whatever the marker carried at write time.
+        gname = _display_name(gid, profile) if gid != "?" else gid
         direction = g.get("direction", "negative")
         if direction == "positive":
             sentence = positive_sentence
             term_head = f"> 🎓🌟 **MASTERED: {gname}**  `+5 XP`"
             ide_head = f"🎓 **MASTERED** 🌟 — `{gname}` · `+5 XP`"
+            full_bar = _streak_bar(
+                GRADUATION_STREAK_TARGET,
+                GRADUATION_STREAK_TARGET,
+                fill_glyph="⚫️",
+            )
         else:
             sentence = negative_sentence
             term_head = f"> 🎓⚡️ **GRADUATED: {gname}**  `+5 XP`"
             ide_head = f"🎓 **GRADUATED** ⚡ — `{gname}` · `+5 XP`"
+            full_bar = _streak_bar(
+                GRADUATION_STREAK_TARGET,
+                GRADUATION_STREAK_TARGET,
+                fill_glyph="🟡",
+            )
         bodies_terminal.append(f"{term_head}\n> `{full_bar}` — {sentence}")
         bodies_ide.append(f"{ide_head}\n`{full_bar}` {sentence}")
     if not bodies_terminal:
@@ -686,6 +718,7 @@ def _assemble_celebrate_block(
     theme: str = "craft",
     now: datetime | None = None,
     streak_oldest: datetime | None = None,
+    profile: dict | None = None,
 ) -> str | None:
     """Return the full <coach-celebrate>...</coach-celebrate> block, or
     None if no events. Applies per-pattern dedup (highest streak wins)
@@ -715,6 +748,20 @@ def _assemble_celebrate_block(
     graduated_ids = {g.get("id") for g in (grads or []) if isinstance(g, dict) and g.get("id")}
     streak_rewards = [s for s in streak_rewards if s.get("id") not in graduated_ids]
 
+    # Pass C: normalize each reward's `name` field via display_name so
+    # both the default-theme and bespoke-theme render paths see the same
+    # user-facing wording (override → profile.name → humanized slug).
+    # display_name is authoritative — the marker's own `name` field is
+    # ignored so a curated WORDING_OVERRIDES entry always wins over
+    # whatever wording the marker carried at write time. We rebuild
+    # dicts to avoid mutating the marker payload.
+    normalized: list[dict] = []
+    for s in streak_rewards:
+        sid = s.get("id", "?")
+        display = _display_name(sid, profile) if sid != "?" else sid
+        normalized.append({**s, "name": display})
+    streak_rewards = normalized
+
     has_any = bool(levelup) or bool(grads) or bool(regs) or bool(streak_rewards)
     if not has_any:
         return None
@@ -730,8 +777,8 @@ def _assemble_celebrate_block(
         and env == "terminal"
     ):
         try:
-            grads_block = _graduation_block(grads, env=env) if grads else ""
-            regs_block = _regression_block(regs, env=env) if regs else ""
+            grads_block = _graduation_block(grads, env=env, profile=profile) if grads else ""
+            regs_block = _regression_block(regs, env=env, profile=profile) if regs else ""
             bespoke = _render_celebrate_for_theme(
                 theme,
                 streak_rewards=streak_rewards,
@@ -765,15 +812,15 @@ def _assemble_celebrate_block(
     out.append("")
 
     if regs:
-        out.append(_regression_block(regs, env=env))
+        out.append(_regression_block(regs, env=env, profile=profile))
     if streak_rewards:
         if regs:
             out.append("")
-        out.append(_streak_reward_block(streak_rewards, env=env))
+        out.append(_streak_reward_block(streak_rewards, env=env, profile=profile))
     if grads:
         if regs or streak_rewards:
             out.append("")
-        out.append(_graduation_block(grads, env=env))
+        out.append(_graduation_block(grads, env=env, profile=profile))
     if levelup:
         if regs or streak_rewards or grads:
             out.append("")
@@ -1633,19 +1680,47 @@ def _detect_completions(
     return completed
 
 
-def _streak_bar(streak: int, target: int = GRADUATION_STREAK_TARGET) -> str:
-    """Streak bar: 🔴🔴🔴⚪⚪ for 3/5. Emoji glyphs carry color
-    intrinsically — red fill for earned positions, hollow white for
-    remaining — so the bar reads identically in Markdown chat and in
-    /coach status without ANSI escapes."""
+def _streak_bar(
+    streak: int,
+    target: int = GRADUATION_STREAK_TARGET,
+    *,
+    fill_glyph: str = "🔴",
+    empty_glyph: str = "⚪",
+) -> str:
+    """Streak bar: e.g. 🔴🔴🔴⚪⚪ for 3/5. Emoji glyphs carry color
+    intrinsically so the bar reads identically in Markdown chat and in
+    /coach status without ANSI escapes. Default 🔴/⚪ is reserved for
+    the tip-attribution streak ladder. Other surfaces pass their own
+    glyphs — 🟢/⚪ for baseline progress (mid-streak banners, ack
+    banners, /coach status rows), 🟡/⚫️ for graduation ceremony bars."""
     streak = max(0, min(streak, target))
-    return "🔴" * streak + "⚪" * (target - streak)
+    return fill_glyph * streak + empty_glyph * (target - streak)
 
 
 def _completion_banner(
-    entries: list[tuple[str, dict]], env: str = "terminal"
+    entries: list[tuple[str, dict]],
+    env: str = "terminal",
+    theme: str = "craft",
+    profile: dict | None = None,
 ) -> str:
-    """Render instructions for tip-complete ack banners."""
+    """Render instructions for tip-complete ack banners.
+
+    `theme` selects per-theme phrasing for the "Tip cleared" /
+    "Strength reinforced" labels (military → "Mission accomplished",
+    hacker → "Exploit landed", etc.). Default `craft` preserves the
+    original wording.
+
+    `profile` is threaded through so `display_name()` can resolve
+    entry_ids to user-facing names (override → profile.name → humanized
+    slug). When None or unavailable, falls back to humanized slug.
+    """
+    try:
+        from banner_themes import completion_labels  # local import keeps cold path light
+        labels = completion_labels(theme)
+    except Exception:
+        labels = {"tip_cleared": "Tip cleared", "strength_reinforced": "Strength reinforced"}
+    tip_cleared = labels["tip_cleared"]
+    strength_reinforced = labels["strength_reinforced"]
     lines: list[str] = []
     lines.append("<coach-tip-complete>")
     lines.append(
@@ -1667,6 +1742,10 @@ def _completion_banner(
         spec = entry.get("spec") or {}
         kind = entry.get("kind", "weakness")
         entry_id = entry.get("entry_id") or ""
+        # Display name resolves curated → profile.name → humanized slug.
+        # Skill cases keep the slash-command form (`/{entry_id}`) since
+        # that's a literal command the user types, not a pattern label.
+        entry_display = _display_name(entry_id, profile)
         streak = int(
             entry.get("positive_streak" if kind == "strength" else "clean_streak", 0)
         )
@@ -1678,18 +1757,18 @@ def _completion_banner(
             if action == "skill_invoke" and kind == "skill":
                 banner = (
                     f"  ---\n"
-                    f"  ✅ **Tip cleared** — `/{entry_id}` invoked · "
+                    f"  ✅ **{tip_cleared}** — `/{entry_id}` invoked · "
                     f"`+{SKILL_XP_PER_UNIQUE} XP banked this session`\n"
                     f"\n"
                     f"  ---"
                 )
             elif action in action_labels:
                 label, xp = action_labels[action]
-                bar = _streak_bar(streak)
+                bar = _streak_bar(streak, fill_glyph="🟢")
                 if kind == "strength":
                     banner = (
                         f"  ---\n"
-                        f"  💪 **Strength reinforced** — `{entry_id}` · "
+                        f"  💪 **{strength_reinforced}** — `{entry_display}` · "
                         f"`{label}` · `+{xp} XP` · `strength streak {bar}`\n"
                         f"\n"
                         f"  ---"
@@ -1697,7 +1776,7 @@ def _completion_banner(
                 else:
                     banner = (
                         f"  ---\n"
-                        f"  ✅ **Tip cleared** — `{entry_id}` · `{label}` · "
+                        f"  ✅ **{tip_cleared}** — `{entry_display}` · `{label}` · "
                         f"`+{xp} XP banked` · `streak {bar} advances next /coach-insights`\n"
                         f"\n"
                         f"  ---"
@@ -1706,41 +1785,41 @@ def _completion_banner(
                 xp = int(spec.get("xp", 0) or 0)
                 desc = spec.get("description") or action or "action detected"
                 xp_pill = f" · `+{xp} XP`" if xp > 0 else ""
-                prefix = "Strength reinforced" if kind == "strength" else "Tip cleared"
+                prefix = strength_reinforced if kind == "strength" else tip_cleared
                 emoji = "💪" if kind == "strength" else "✅"
                 banner = (
                     f"  ---\n"
-                    f"  {emoji} **{prefix}** — `{entry_id}` · `{desc}`{xp_pill}\n"
+                    f"  {emoji} **{prefix}** — `{entry_display}` · `{desc}`{xp_pill}\n"
                     f"\n"
                     f"  ---"
                 )
             lines.append(banner)
             continue
-        # Terminal path (unchanged)
+        # Terminal path
         if action == "skill_invoke" and kind == "skill":
             banner = (
-                f"  > ✅ **Tip cleared** — `/{entry_id}` invoked · "
+                f"  > ✅ **{tip_cleared}** — `/{entry_id}` invoked · "
                 f"`+{SKILL_XP_PER_UNIQUE} XP` banked this session"
             )
         elif action in action_labels:
             label, xp = action_labels[action]
-            bar = _streak_bar(streak)
+            bar = _streak_bar(streak, fill_glyph="🟢")
             if kind == "strength":
-                lines.append(f"  > 💪 Strength reinforced — {label}")
-                lines.append(f"  > +{xp} XP · {entry_id} strength streak {bar}")
+                lines.append(f"  > 💪 {strength_reinforced} — {label}")
+                lines.append(f"  > +{xp} XP · {entry_display} strength streak {bar}")
                 continue
-            prefix = "Strength reinforced" if kind == "strength" else "Tip cleared"
+            prefix = strength_reinforced if kind == "strength" else tip_cleared
             streak_label = "strength streak" if kind == "strength" else "streak"
             banner = (
                 f"  > ✅ **{prefix}** — {label} · `+{xp} XP` · "
-                f"`{entry_id}` {streak_label} {bar} (advances on next /coach-insights run)"
+                f"`{entry_display}` {streak_label} {bar} (advances on next /coach-insights run)"
             )
         else:
             xp = int(spec.get("xp", 0) or 0)
             desc = spec.get("description") or action or "action detected"
             xp_text = f" · `+{xp} XP`" if xp > 0 else ""
-            prefix = "Strength reinforced" if kind == "strength" else "Tip cleared"
-            banner = f"  > ✅ **{prefix}** — {desc}{xp_text} · `{entry_id}`"
+            prefix = strength_reinforced if kind == "strength" else tip_cleared
+            banner = f"  > ✅ **{prefix}** — {desc}{xp_text} · `{entry_display}`"
         lines.append(banner)
     lines.append("")
     lines.append("Rules:")
@@ -1772,14 +1851,16 @@ def _streak_stage_label(kind: str, streak: int, target: int) -> str:
     so callers don't need to change."""
     del kind  # unified ladder; both kinds render the same stage labels
     if streak >= target:
-        return "🏆 mastered"
+        return "🏆 Mastered"
     if streak >= 4:
-        return "🔥 streak"
+        return "🔥 Streak"
     if streak >= 3:
-        return "🌶️ heating up"
+        return "🌶️ Heating up"
     if streak >= 2:
-        return "🌡️ warming up"
-    return "streak"
+        return "♨️ Let 'em cook"
+    if streak >= 1:
+        return "🌡️ Warming up"
+    return "🧊 Ice cold"
 
 
 def _xp_attribution(tip: dict, env: str = "terminal") -> list[str]:
@@ -2197,9 +2278,29 @@ def main() -> None:
                         if ack_at and ack_at < cutoff:
                             pending.pop(tip_id, None)
                 _save_tip_state_unlocked(tip_state)
+        # Theme is read once and used by both the completion banner
+        # (per-theme "Tip cleared" labels) and the celebrate dispatch
+        # (bespoke streak shapes). Failures fall back to "craft" so a
+        # missing/corrupt config can never break rendering.
+        try:
+            theme = _get_theme()
+        except Exception:
+            theme = "craft"
+        # Profile is read once and threaded into every banner that
+        # mentions a pattern by name — display_name() resolves entry_ids
+        # to user-facing wording (curated override → profile.name →
+        # humanized slug). Failures fall back to None so display_name
+        # uses the slug-humanization path.
+        try:
+            display_profile = _load_profile()
+        except Exception:
+            display_profile = None
+
         completion_block: str | None = None
         if completions:
-            completion_block = _completion_banner(completions, env=env)
+            completion_block = _completion_banner(
+                completions, env=env, theme=theme, profile=display_profile
+            )
 
         levelup = _read_and_consume(LEVELUP_MARKER, session_key, now)
         grad_data = _read_and_consume(GRADUATION_MARKER, session_key, now)
@@ -2223,13 +2324,9 @@ def main() -> None:
             for p in (levelup, grad_data, reg_data, streak_data)
         )
 
-        # Defensive read of theme + streak window. Both are optional from
-        # _assemble_celebrate_block's POV — only consumed by the bespoke
-        # dispatch — so failures here fall through to default rendering.
-        try:
-            theme = _get_theme()
-        except Exception:
-            theme = "craft"
+        # `theme` was loaded above (used by both _completion_banner and
+        # the bespoke celebrate dispatch). Streak window is optional and
+        # only consumed by the bespoke dispatch.
         streak_oldest = None
         if isinstance(streak_data, dict):
             streak_oldest = _parse_iso(streak_data.get("oldest_entry_at"))
@@ -2244,6 +2341,7 @@ def main() -> None:
             theme=theme,
             now=now,
             streak_oldest=streak_oldest,
+            profile=display_profile,
         )
         celebrate_blocks: list[str] = [celebrate_block] if celebrate_block else []
 

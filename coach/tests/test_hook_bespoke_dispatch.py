@@ -110,7 +110,7 @@ def _streak_fixture():
 # starwars MUST render the historical default shape. No bespoke dispatch.
 
 def test_craft_theme_terminal_renders_default_shape(cup):
-    """craft + terminal must produce the default `> ↑ name 🔴🔴🔴🔴⚪ ...`
+    """craft + terminal must produce the default `> ↑ name 🟢🟢🟢🟢⚪ ...`
     shape — byte-for-byte regression guard for the seven untouched themes."""
     block = cup._assemble_celebrate_block(
         grads=[],
@@ -124,10 +124,10 @@ def test_craft_theme_terminal_renders_default_shape(cup):
         streak_oldest=YESTERDAY,
     )
     assert block is not None
-    # Default streak rendering uses 🔴⚪ meter and inline backtick spans.
+    # Default streak rendering uses 🟢⚪ meter and inline backtick spans.
     # If a regression flips this back to a bespoke shape, this test fails.
-    assert "> ↑ `safe git hygiene` `🔴🔴🔴🔴⚪` 4/5 · `+2`" in block
-    assert "> ↓ `heavy subagent delegation` `🔴🔴🔴🔴⚪` 4/5 · `-2`" in block
+    assert "> ↑ `safe git hygiene` `🟢🟢🟢🟢⚪` 4/5 · `+2`" in block
+    assert "> ↓ `heavy subagent delegation` `🟢🟢🟢🟢⚪` 4/5 · `-2`" in block
     # Bespoke header / glyphs MUST NOT appear.
     assert "Tide turned" not in block
     assert "🦞" not in block
@@ -173,6 +173,50 @@ def test_ocean_theme_terminal_uses_bespoke_render(cup):
     # Catch-up framing line is REMOVED for bespoke themes — header carries
     # the date instead.
     assert "Milestones earned across earlier sessions" not in block
+
+
+def test_bespoke_theme_normalizes_streak_reward_names(cup):
+    """Regression: bespoke themes (ocean/forge/skyrim/military/hacker)
+    used to render `r["name"]` raw, leaking slugs whenever the marker
+    payload had `name == id` (the analyze.py:295 bug class). The Pass C
+    normalization in _assemble_celebrate_block now resolves names via
+    display_name BEFORE the bespoke dispatch, so all five bespoke themes
+    inherit the same humanized rendering as the default-theme path."""
+    bad_marker = [
+        {"id": "under-planning", "name": "under-planning",  # slug-as-name
+         "streak": 4, "target": 5, "xp_awarded": 2, "direction": "negative"},
+    ]
+    # hacker theme snake-cases names by design ("thin planning" →
+    # "thin_planning"); other bespoke themes keep the space form.
+    expected_form = {
+        "ocean":    "thin planning",
+        "forge":    "thin planning",
+        "skyrim":   "thin planning",
+        "military": "thin planning",
+        "hacker":   "thin_planning",
+    }
+    for theme, expected in expected_form.items():
+        block = cup._assemble_celebrate_block(
+            grads=[],
+            regs=[],
+            streak_rewards=bad_marker,
+            levelup=None,
+            caught_up=False,
+            env="terminal",
+            theme=theme,
+            now=NOW,
+            streak_oldest=YESTERDAY,
+        )
+        assert block is not None, f"{theme} produced no block"
+        assert "under-planning" not in block, (
+            f"{theme} leaked the kebab slug — Pass C normalization regressed"
+        )
+        assert "under_planning" not in block, (
+            f"{theme} leaked the snake-cased slug — name field wasn't normalized"
+        )
+        assert expected in block, (
+            f"{theme} did not render the curated override (expected {expected!r})"
+        )
 
 
 def test_ocean_theme_ide_falls_back_to_default(cup):

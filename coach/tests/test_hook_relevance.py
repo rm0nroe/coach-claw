@@ -841,7 +841,7 @@ def test_xp_attribution_uses_arrow_marker(cup):
     assert weakness_lines[0].startswith("_↑ +2 per test run")
     assert "XP" not in weakness_lines[0]
     assert "🔥" not in weakness_lines[0]
-    assert weakness_lines[1].startswith("_🌡️ warming up")
+    assert weakness_lines[1].startswith("_♨️ Let 'em cook")
     assert "2/5" in weakness_lines[1]
     assert all("✨" not in line for line in weakness_lines)
 
@@ -849,10 +849,12 @@ def test_xp_attribution_uses_arrow_marker(cup):
 @pytest.mark.parametrize(
     ("streak", "expected"),
     [
-        (2, "_🌡️ warming up 🔴🔴⚪⚪⚪ 2/5 → +5 bonus at 5/5._"),
-        (3, "_🌶️ heating up 🔴🔴🔴⚪⚪ 3/5 → +5 bonus at 5/5._"),
-        (4, "_🔥 streak 🔴🔴🔴🔴⚪ 4/5 → +5 bonus at 5/5._"),
-        (5, "_🏆 mastered 🔴🔴🔴🔴🔴 5/5 → +5 bonus ready._"),
+        (0, "_🧊 Ice cold ⚪⚪⚪⚪⚪ 0/5 → +5 bonus at 5/5._"),
+        (1, "_🌡️ Warming up 🔴⚪⚪⚪⚪ 1/5 → +5 bonus at 5/5._"),
+        (2, "_♨️ Let 'em cook 🔴🔴⚪⚪⚪ 2/5 → +5 bonus at 5/5._"),
+        (3, "_🌶️ Heating up 🔴🔴🔴⚪⚪ 3/5 → +5 bonus at 5/5._"),
+        (4, "_🔥 Streak 🔴🔴🔴🔴⚪ 4/5 → +5 bonus at 5/5._"),
+        (5, "_🏆 Mastered 🔴🔴🔴🔴🔴 5/5 → +5 bonus ready._"),
     ],
 )
 def test_weakness_streak_stage_ladder(cup, streak, expected):
@@ -863,10 +865,12 @@ def test_weakness_streak_stage_ladder(cup, streak, expected):
 @pytest.mark.parametrize(
     ("streak", "expected"),
     [
-        (2, "_🌡️ warming up 🔴🔴⚪⚪⚪ 2/5 → +5 mastery bonus at 5/5._"),
-        (3, "_🌶️ heating up 🔴🔴🔴⚪⚪ 3/5 → +5 mastery bonus at 5/5._"),
-        (4, "_🔥 streak 🔴🔴🔴🔴⚪ 4/5 → +5 mastery bonus at 5/5._"),
-        (5, "_🏆 mastered 🔴🔴🔴🔴🔴 5/5 → +5 mastery bonus ready._"),
+        (0, "_🧊 Ice cold ⚪⚪⚪⚪⚪ 0/5 → +5 mastery bonus at 5/5._"),
+        (1, "_🌡️ Warming up 🔴⚪⚪⚪⚪ 1/5 → +5 mastery bonus at 5/5._"),
+        (2, "_♨️ Let 'em cook 🔴🔴⚪⚪⚪ 2/5 → +5 mastery bonus at 5/5._"),
+        (3, "_🌶️ Heating up 🔴🔴🔴⚪⚪ 3/5 → +5 mastery bonus at 5/5._"),
+        (4, "_🔥 Streak 🔴🔴🔴🔴⚪ 4/5 → +5 mastery bonus at 5/5._"),
+        (5, "_🏆 Mastered 🔴🔴🔴🔴🔴 5/5 → +5 mastery bonus ready._"),
     ],
 )
 def test_strength_streak_stage_ladder(cup, streak, expected):
@@ -889,7 +893,7 @@ def test_strength_tips_have_distinct_runtime_treatment(cup):
     assert lines[0].startswith("_↑ +2 per test run")
     assert "XP" not in lines[0]
     assert "🔥" not in lines[0]
-    assert "🌶️ heating up" in lines[1]
+    assert "🌶️ Heating up" in lines[1]
     assert "3/5" in lines[1]
 
     spec = cup._completion_spec({
@@ -910,7 +914,8 @@ def test_strength_completion_banner_reinforces_instead_of_clearing(cup):
         })
     ])
     assert "> 💪 Strength reinforced — test runner detected" in block
-    assert "> +2 XP · tests-after-edits strength streak 🔴🔴⚪⚪⚪" in block
+    assert "> +2 XP · testing after edits strength streak 🟢🟢⚪⚪⚪" in block
+    assert "tests-after-edits" not in block  # slug must not leak
     assert "advances on next /coach-insights run" not in block
 
 
