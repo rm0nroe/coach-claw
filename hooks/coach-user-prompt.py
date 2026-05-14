@@ -617,7 +617,10 @@ def _streak_reward_block(
         direction = r.get("direction", "negative")
         filled = _streak_bar(streak, target, fill_glyph="🟢")
         arrow = "↑" if direction == "positive" else "↓"
-        signed_xp = f"+{xp}" if direction == "positive" else f"-{xp}"
+        # Streak rewards are always positive XP credits (merge.py's
+        # add_milestone_xp adds `xp_awarded` to lifetime XP). The arrow
+        # carries direction; the number carries the actual credit sign.
+        signed_xp = f"+{xp}"
         bodies_terminal.append(
             f"> {arrow} `{rname}` `{filled}` {streak}/{target} · `{signed_xp}`"
         )

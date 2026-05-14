@@ -127,7 +127,7 @@ def test_craft_theme_terminal_renders_default_shape(cup):
     # Default streak rendering uses 🟢⚪ meter and inline backtick spans.
     # If a regression flips this back to a bespoke shape, this test fails.
     assert "> ↑ `safe git hygiene` `🟢🟢🟢🟢⚪` 4/5 · `+2`" in block
-    assert "> ↓ `heavy subagent delegation` `🟢🟢🟢🟢⚪` 4/5 · `-2`" in block
+    assert "> ↓ `heavy subagent delegation` `🟢🟢🟢🟢⚪` 4/5 · `+2`" in block
     # Bespoke header / glyphs MUST NOT appear.
     assert "Tide turned" not in block
     assert "🦞" not in block

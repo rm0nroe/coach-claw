@@ -161,10 +161,13 @@ def test_ocean_streak_row_negative_direction():
         now=NOW,
         streak_oldest=YESTERDAY,
     )
-    # Negative-direction row: ebbing + ↓arrow.
-    assert "heavy subagent delegation" in out
-    assert "ebbing" in out
-    assert "↓2" in out
+    # Negative-direction row: ebbing verb + ↑XP (credit is always up,
+    # direction-of-pattern carried by the verb column).
+    row = next(line for line in out.splitlines()
+               if "heavy subagent delegation" in line)
+    assert "ebbing" in row
+    assert "↑2" in row
+    assert "↓2" not in row
 
 
 def test_ocean_meter_glyphs_match_locked_shape():
@@ -325,9 +328,13 @@ def test_forge_streak_row_verbs_and_meter():
     assert "▰▰▰▰▱" in out
     assert "tempering" in out
     assert "↑2" in out
-    # Negative direction → quenching verb + ↓arrow.
-    assert "quenching" in out
-    assert "↓2" in out
+    # Negative-direction row: quenching verb + ↑XP (credit always up,
+    # direction-of-pattern carried by the verb column).
+    neg_row = next(line for line in out.splitlines()
+                   if "heavy subagent delegation" in line)
+    assert "quenching" in neg_row
+    assert "↑2" in neg_row
+    assert "↓2" not in neg_row
     # Ocean glyphs must NOT leak into forge.
     assert "≋" not in out
     assert "rising tide" not in out
@@ -442,8 +449,15 @@ def test_skyrim_streak_row_verbs():
     )
     assert "oath kept" in out
     assert "curse fades" in out
-    assert "↑2" in out
-    assert "↓2" in out
+    # Both rows render ↑XP — credit is always up; direction-of-pattern
+    # is carried by `oath kept` (positive) vs `curse fades` (negative).
+    pos_row = next(line for line in out.splitlines()
+                   if "safe git hygiene" in line)
+    neg_row = next(line for line in out.splitlines()
+                   if "heavy subagent delegation" in line)
+    assert "↑2" in pos_row
+    assert "↑2" in neg_row
+    assert "↓2" not in neg_row
 
 
 def test_skyrim_levelup_uses_fleur_glyph_and_theme_name():
@@ -766,8 +780,16 @@ def test_military_rows_use_push_hold_tags_and_xp_unit():
     assert "[PUSH] ▮▮▮▮▯  safe git hygiene" in out
     assert "[HOLD] ▮▮▮▮▯  heavy subagent delegation" in out
     # XP format includes 'XP' suffix for military (verb-style omits it).
-    assert "↑2 XP" in out
-    assert "↓2 XP" in out
+    # Both [PUSH] (positive) and [HOLD] (negative) rows render ↑N XP —
+    # the arrow tracks XP movement (always up), the tag carries pattern
+    # direction.
+    pos_row = next(line for line in out.splitlines()
+                   if "safe git hygiene" in line)
+    neg_row = next(line for line in out.splitlines()
+                   if "heavy subagent delegation" in line)
+    assert "↑2 XP" in pos_row
+    assert "↑2 XP" in neg_row
+    assert "↓2 XP" not in neg_row
     # Verb-style markers must NOT leak.
     assert "tempering" not in out
     assert "rising tide" not in out

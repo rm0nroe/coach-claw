@@ -41,10 +41,18 @@ def _meter(streak: int, target: int, filled: str, empty: str) -> str:
 
 
 def _arrow_xp(direction: str, xp: int, *, with_unit: bool = False) -> str:
-    """`↑N` for positive, `↓N` for negative. Set `with_unit=True` for
-    `↑N XP` (military variant)."""
-    arrow = "↑" if direction == "positive" else "↓"
-    return f"{arrow}{xp} XP" if with_unit else f"{arrow}{xp}"
+    """Always `↑N` (or `↑N XP` with `with_unit=True`). Streak rewards
+    are XP credits regardless of pattern direction — the arrow tracks
+    direction-of-XP-movement (always up), not direction-of-pattern.
+    Direction-of-pattern is already encoded by each theme's verb/tag
+    column (e.g., ocean's `ebbing`, military's `[HOLD]`). Matches the
+    hacker theme's `[↑N xp]` rendering, whose anti-regression tests
+    (`test_hacker_*` in test_banner_themes.py) pin the canonical
+    contract. `direction` is kept in the signature for callsite
+    symmetry and future-proofing — current callers always pass it but
+    it's intentionally unused."""
+    del direction  # intentionally unused — see docstring
+    return f"↑{xp} XP" if with_unit else f"↑{xp}"
 
 
 def _format_window_phrase(now: datetime, oldest: datetime | None) -> dict:
@@ -86,9 +94,11 @@ def _format_window_phrase(now: datetime, oldest: datetime | None) -> dict:
 
 # -----------------------------------------------------------------------------
 # Verb-style themes — forge, ocean, skyrim share the row skeleton:
-#   `>   {meter}  {name:<W}  {verb:<V}   {arrow}{xp}`
-# Differences live in the spec dict (header glyph, label, meter glyphs,
-# verb words, footer template).
+#   `>   {meter}  {name:<W}  {verb:<V}   ↑{xp}`
+# The trailing `↑{xp}` is always-up — direction-of-pattern is encoded
+# by the verb column ({verb_positive} vs {verb_negative}); see
+# `_arrow_xp`. Differences live in the spec dict (header glyph, label,
+# meter glyphs, verb words, footer template).
 
 # Top-N cap for streak rows. Banners that ticked many patterns at once
 # (e.g., catch-up after a multi-day idle) get noisy fast — show the
@@ -342,8 +352,9 @@ def _render_military(
         > ◢  SITREP · 2026-05-07 · 0500Z
 
     Rows have a [PUSH]/[HOLD] tag prefix and use ▮▯ meter, no verb column,
-    `↑N XP` / `↓N XP` (with unit):
-        >   [PUSH] ▮▮▮▮▯  safe git hygiene         ↑2 XP
+    always `↑N XP` (with unit; XP is always a credit — see `_arrow_xp`):
+        >   [PUSH] ▮▮▮▮▯  safe git hygiene             ↑2 XP
+        >   [HOLD] ▮▮▮▮▯  heavy subagent delegation    ↑2 XP
 
     Footer is a rank ribbon — medal count + Roman numeral + ELO + theme-
     aware level name + next-promotion threshold:

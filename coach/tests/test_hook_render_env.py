@@ -179,7 +179,7 @@ def test_streak_reward_terminal_negative(cup):
           "direction": "negative", "streak": 3, "target": 5, "xp_awarded": 1}],
         env="terminal",
     )
-    expected = "> ↓ `edits without testing` `🟢🟢🟢⚪⚪` 3/5 · `-1`"
+    expected = "> ↓ `edits without testing` `🟢🟢🟢⚪⚪` 3/5 · `+1`"
     assert expected in block
     assert "↑" not in block
     assert "edits-without-testing" not in block  # slug must not leak
@@ -203,7 +203,7 @@ def test_streak_reward_ide_negative(cup):
           "direction": "negative", "streak": 3, "target": 5, "xp_awarded": 1}],
         env="ide",
     )
-    expected = "↓ `edits without testing` · `🟢🟢🟢⚪⚪ 3/5` · `-1`"
+    expected = "↓ `edits without testing` · `🟢🟢🟢⚪⚪ 3/5` · `+1`"
     assert expected in block
     assert "↑" not in block
     assert block.startswith("---\n")

@@ -1,6 +1,6 @@
 {
   "name": "coach-claw",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "description": "Self-evolving coaching layer for Claude Code — ambient tips, XP, and session insights driven by your own transcript history.",
   "author": {
     "name": "Ryan Monroe"
