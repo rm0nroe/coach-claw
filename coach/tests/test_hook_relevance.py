@@ -981,19 +981,23 @@ def test_tip_log_records_redacted_bounded_events(cup, tmp_path, monkeypatch):
 
 
 def test_celebration_banners_use_canonical_glyphs(cup):
-    # Streak rewards: directional arrows (positive→↑, negative→↓), no ✨ leakage.
+    # Streak rewards (v1.0.10): arrow is always ↑ — earning surface.
+    # Direction-of-pattern is encoded by the name (canonical for
+    # positive, positive-inverse for negative). No ✨ leakage.
     streak_neg = cup._streak_reward_block(
         [{"id": "x", "name": "x", "streak": 2, "target": 5,
           "xp_awarded": 1, "direction": "negative"}]
     )
-    assert "↓" in streak_neg and "✨" not in streak_neg
+    assert "↑" in streak_neg and "↓" not in streak_neg and "✨" not in streak_neg
     streak_pos = cup._streak_reward_block(
         [{"id": "y", "name": "y", "streak": 2, "target": 5,
           "xp_awarded": 1, "direction": "positive"}]
     )
-    assert "↑" in streak_pos and "✨" not in streak_pos
+    assert "↑" in streak_pos and "↓" not in streak_pos and "✨" not in streak_pos
 
-    # Graduations: 🎓⚡️ (negative) / 🎓🌟 (positive) ceremonial pair preserved.
+    # Graduations (v1.0.10): both directions land on MASTERED — the
+    # glyph distinguishes origin (⚡️ retired weakness vs 🌟 reinforced
+    # strength). No ✨ leakage.
     grad = cup._graduation_block(
         [{"id": "x", "name": "x", "direction": "negative",
           "graduated_reason": "5 clean runs"}]

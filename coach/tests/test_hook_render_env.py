@@ -146,12 +146,15 @@ def test_regression_terminal_uses_blockquote(cup):
           "originally_graduated_at": "2026-04-01"}],
         env="terminal",
     )
-    # Verbatim banner: display_name override wins over marker name, so
-    # the heading shows the curated wording. Graduation date is
-    # interpolated into the body sentence.
-    assert "> ⚠️ **Regressed: edits without testing**" in block
+    # Slipping-surface contract (v1.0.10): canonical negative name +
+    # "Bad habit returned:" heading. Positive inverse must NOT leak —
+    # the user needs to recognize the slip in the language they
+    # learned to fear, not a softened reframe.
+    assert "> ⚠️ **Bad habit returned: edits without testing**" in block
     assert "(was graduated 2026-04-01)" in block
     assert "edits-without-testing" not in block  # slug must not leak
+    assert "testing during edits" not in block  # positive frame must NOT leak
+    assert "Regressed:" not in block            # old heading must NOT leak
     assert "---" not in block
 
 
@@ -161,8 +164,10 @@ def test_regression_ide_uses_hr_frame(cup):
           "originally_graduated_at": "2026-04-01"}],
         env="ide",
     )
-    assert "⚠️ **Regressed** — `edits without testing`" in block
+    assert "⚠️ **Bad habit returned** — `edits without testing`" in block
     assert "edits-without-testing" not in block  # slug must not leak
+    assert "testing during edits" not in block  # positive frame must NOT leak
+    assert "Regressed" not in block             # old heading must NOT leak
     assert block.startswith("---\n")
     assert block.endswith("\n---")
     assert "\n\n---" in block  # Setext-H2 guard
@@ -173,16 +178,20 @@ def test_regression_ide_uses_hr_frame(cup):
 # -----------------------------------------------------------------------------
 
 def test_streak_reward_terminal_negative(cup):
-    """Negative direction → ↓ arrow, name (not slug) in body."""
+    """Earning-surface contract (v1.0.10): negative-direction row uses
+    `↑` (XP credit direction) and the POSITIVE INVERSE name. Canonical
+    negative name must NOT leak — the user just took the positive
+    action and should see it named."""
     block = cup._streak_reward_block(
         [{"id": "edits-without-testing", "name": "edits without testing",
           "direction": "negative", "streak": 3, "target": 5, "xp_awarded": 1}],
         env="terminal",
     )
-    expected = "> ↓ `edits without testing` `🟢🟢🟢⚪⚪` 3/5 · `+1`"
+    expected = "> ↑ `testing during edits` `🟢🟢🟢⚪⚪` 3/5 · `+1`"
     assert expected in block
-    assert "↑" not in block
-    assert "edits-without-testing" not in block  # slug must not leak
+    assert "↓" not in block                            # arrow is XP direction, always up
+    assert "edits-without-testing" not in block        # slug must not leak
+    assert "edits without testing" not in block        # canonical neg must NOT leak
 
 
 def test_streak_reward_terminal_positive(cup):
@@ -203,9 +212,10 @@ def test_streak_reward_ide_negative(cup):
           "direction": "negative", "streak": 3, "target": 5, "xp_awarded": 1}],
         env="ide",
     )
-    expected = "↓ `edits without testing` · `🟢🟢🟢⚪⚪ 3/5` · `+1`"
+    expected = "↑ `testing during edits` · `🟢🟢🟢⚪⚪ 3/5` · `+1`"
     assert expected in block
-    assert "↑" not in block
+    assert "↓" not in block                            # arrow is XP direction, always up
+    assert "edits without testing" not in block        # canonical neg must NOT leak
     assert block.startswith("---\n")
     assert block.endswith("\n---")
     assert "\n\n---" in block  # Setext-H2 guard
@@ -227,18 +237,25 @@ def test_streak_reward_ide_positive(cup):
 # -----------------------------------------------------------------------------
 
 def test_graduation_terminal_negative(cup):
-    """Negative graduation → GRADUATED ⚡️ shape with weakness-retired body.
-    No POSITIVE shape may leak into the output (verbatim, not template)."""
+    """Earning-surface contract (v1.0.10): both directions land on the
+    word MASTERED — the glyph (⚡️ vs 🌟) distinguishes origin. Negative
+    graduation uses the POSITIVE INVERSE name and "habit locked in"
+    body. Canonical negative name and old "GRADUATED"/"weakness
+    retired" wording must NOT leak."""
     block = cup._graduation_block(
         [{"id": "edits-without-testing", "name": "edits without testing",
           "direction": "negative", "graduated_reason": "absent-5-runs"}],
         env="terminal",
     )
-    assert "> 🎓⚡️ **GRADUATED: edits without testing**  `+5 XP`" in block
-    assert "5 clean Coach insights runs in a row — weakness retired." in block
-    assert "MASTERED" not in block  # positive shape must NOT appear
-    assert "core strength" not in block
-    assert "edits-without-testing" not in block  # slug must not leak
+    assert "> 🎓⚡️ **MASTERED: testing during edits**  `+5 XP`" in block
+    assert "habit locked in" in block
+    assert "removed from watchlist" in block
+    assert "🌟" not in block                       # positive glyph must NOT appear
+    assert "core strength" not in block           # positive body must NOT appear
+    assert "GRADUATED" not in block               # old heading must NOT leak
+    assert "weakness retired" not in block        # old body must NOT leak
+    assert "edits-without-testing" not in block   # slug must not leak
+    assert "edits without testing" not in block   # canonical neg must NOT leak
     assert "---" not in block
 
 
@@ -259,14 +276,21 @@ def test_graduation_terminal_positive(cup):
 
 
 def test_graduation_ide_negative(cup):
+    """IDE shape parallels terminal: MASTERED heading + ⚡ origin glyph
+    + positive inverse name + habit-locked-in body. Old "GRADUATED" /
+    "weakness retired" wording and canonical negative name must NOT
+    leak (the v1.0.10 contract)."""
     block = cup._graduation_block(
         [{"id": "edits-without-testing", "name": "edits without testing",
           "direction": "negative", "graduated_reason": "absent-5-runs"}],
         env="ide",
     )
-    assert "🎓 **GRADUATED** ⚡ — `edits without testing` · `+5 XP`" in block
-    assert "weakness retired" in block
-    assert "MASTERED" not in block  # positive shape must NOT appear
+    assert "🎓 **MASTERED** ⚡ — `testing during edits` · `+5 XP`" in block
+    assert "habit locked in" in block
+    assert "🌟" not in block                       # positive glyph must NOT appear
+    assert "GRADUATED" not in block               # old heading must NOT leak
+    assert "weakness retired" not in block        # old body must NOT leak
+    assert "edits without testing" not in block   # canonical neg must NOT leak
     assert block.startswith("---\n")
     assert block.endswith("\n---")
     assert "\n\n---" in block  # Setext-H2 guard
@@ -295,23 +319,27 @@ def test_graduation_ide_positive(cup):
 
 def test_curated_override_wins_over_marker_name(cup):
     """Regression: when a marker carries a `name` that differs from the
-    curated WORDING_OVERRIDES entry for that slug, the override MUST win.
-    The teammate-found bug was the milestone renderers preferring marker
-    name over display_name's resolution chain — defeating the natural-
-    language override contract for known awkward phrases."""
-    # `commit-without-testing` carries marker name "commit without
-    # testing" (analyze.py:350), but the curated override is the richer
-    # "committing without testing".
+    curated entry for that slug, the resolver MUST win — earning
+    surfaces consult INVERSE_OVERRIDES, slipping surfaces consult
+    WORDING_OVERRIDES. The marker's `name` field is ignored in both.
+
+    `commit-without-testing` carries marker name "commit without
+    testing" (analyze.py:350); the curated negative name is the
+    richer "committing without testing"; the curated positive inverse
+    is "testing before committing"."""
     streak_block = cup._streak_reward_block(
         [{"id": "commit-without-testing", "name": "commit without testing",
           "direction": "negative", "streak": 3, "target": 5, "xp_awarded": 1}],
         env="terminal",
     )
-    assert "committing without testing" in streak_block, (
-        "streak reward banner ignored the curated override"
+    assert "testing before committing" in streak_block, (
+        "streak reward banner did not resolve the positive inverse"
     )
     assert "`commit without testing`" not in streak_block, (
         "marker name leaked through despite override match"
+    )
+    assert "committing without testing" not in streak_block, (
+        "earning surface should not show the canonical negative name"
     )
 
     grad_block = cup._graduation_block(
@@ -319,8 +347,11 @@ def test_curated_override_wins_over_marker_name(cup):
           "direction": "negative", "graduated_reason": "absent-5-runs"}],
         env="terminal",
     )
-    assert "GRADUATED: committing without testing" in grad_block, (
-        "graduation banner ignored the curated override"
+    assert "MASTERED: testing before committing" in grad_block, (
+        "graduation banner did not resolve the positive inverse"
+    )
+    assert "committing without testing" not in grad_block, (
+        "earning surface should not show the canonical negative name"
     )
 
     reg_block = cup._regression_block(
@@ -328,8 +359,11 @@ def test_curated_override_wins_over_marker_name(cup):
           "originally_graduated_at": "2026-04-01"}],
         env="terminal",
     )
-    assert "Regressed: committing without testing" in reg_block, (
-        "regression banner ignored the curated override"
+    assert "Bad habit returned: committing without testing" in reg_block, (
+        "regression banner did not resolve the canonical override"
+    )
+    assert "testing before committing" not in reg_block, (
+        "slipping surface should not show the positive inverse"
     )
 
 
@@ -385,6 +419,10 @@ def test_completion_banner_ide_skill(cup):
 
 
 def test_completion_banner_ide_weakness(cup):
+    """Earning-surface contract (v1.0.10): weakness tip-completion acks
+    fire when the user just took the positive action — name the
+    action, not the bad habit. Canonical negative name must NOT
+    leak."""
     block = cup._completion_banner(
         [("entry:edits-without-testing", {
             "kind": "weakness", "entry_id": "edits-without-testing",
@@ -394,8 +432,9 @@ def test_completion_banner_ide_weakness(cup):
         env="ide",
     )
     assert "  ---" in block
-    assert "✅ **Tip cleared** — `edits without testing`" in block
-    assert "edits-without-testing" not in block  # slug must not leak
+    assert "✅ **Tip cleared** — `testing during edits`" in block
+    assert "edits-without-testing" not in block        # slug must not leak
+    assert "`edits without testing`" not in block      # canonical neg must NOT leak
     assert "`+2 XP banked`" in block
     assert "`streak 🟢🟢⚪⚪⚪ advances next /coach-insights`" in block
 

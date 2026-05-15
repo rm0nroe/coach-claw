@@ -79,8 +79,9 @@ def test_dedup_handles_missing_id_gracefully(cup, now):
         env="terminal",
     )
     assert block is not None
-    # Only the valid one renders.
-    assert block.count("> ↓ ") == 1
+    # Only the valid one renders. Earning-surface contract (v1.0.10):
+    # row leads with ↑ regardless of direction (arrow tracks XP credit).
+    assert block.count("> ↑ ") == 1
     assert "valid pattern" in block
 
 
@@ -400,14 +401,17 @@ def test_celebrate_combines_all_event_kinds(cup, now):
         env="terminal",
     )
     assert block is not None
-    # All four banner heads present.
-    assert "**Regressed: pattern r**" in block
-    assert "> ↓ " in block
+    # All four banner heads present. v1.0.10 contract: regressions use
+    # "Bad habit returned:" (slipping surface, canonical name);
+    # streaks use ↑ (earning surface); graduations use MASTERED regardless
+    # of direction (the glyph distinguishes origin).
+    assert "**Bad habit returned: pattern r**" in block
+    assert "> ↑ " in block
     assert "**MASTERED: pattern g**" in block
     assert "**Level up!**" in block
     # Documented order: regressions, streaks, graduations, level-up.
-    pos_reg = block.index("Regressed:")
-    pos_streak = block.index("> ↓ ")
+    pos_reg = block.index("Bad habit returned:")
+    pos_streak = block.index("> ↑ ")
     pos_grad = block.index("MASTERED:")
     pos_levelup = block.index("Level up!")
     assert pos_reg < pos_streak < pos_grad < pos_levelup

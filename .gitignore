@@ -30,6 +30,10 @@ coach/log.ndjson
 /CHANGELOG.md
 /CLAUDE.local.md
 
+# Maintainer-local Claude Code config — skills, settings, plans.
+# Project-scoped to this checkout; never shipped or committed.
+/.claude/
+
 # Local-only social preview iterations — kept on disk for reference,
 # not shipped. Repo-card image is uploaded via GitHub Settings if needed.
 artifacts/social-preview*.png

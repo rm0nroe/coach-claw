@@ -1,7 +1,5 @@
 # Coach Claw
 
-> [**rm0nroe.github.io/coach-claw →**](https://rm0nroe.github.io/coach-claw/) &nbsp;·&nbsp; live demo with the scroll-pinned tip walkthrough
-
 A self-evolving coaching layer for [Claude Code](https://claude.com/claude-code). It learns
 from your actual session transcripts and nudges your habits — both the ones to break and
 the ones to keep going — with XP-rewarded ambient tips inside Claude Code.

@@ -98,7 +98,11 @@ except Exception:
 try:
     from display_names import display_name as _display_name  # noqa: E402
 except Exception:
-    def _display_name(entry_id, profile=None):  # type: ignore[no-redef]
+    def _display_name(entry_id, profile=None, *, positive_frame: bool = False):  # type: ignore[no-redef]
+        # Degraded fallback when display_names import fails. Accepts
+        # positive_frame so callers don't crash, but cannot perform the
+        # inverse lookup — humanized slug is the best we can do.
+        del positive_frame
         if not entry_id:
             return entry_id
         return entry_id.replace("-", " ")
@@ -566,18 +570,23 @@ def _regression_block(
     regs: list, env: str = "terminal", profile: dict | None = None
 ) -> str:
     """Pre-rendered regression banners. One per dict, stacked.
-    Body is templated — name and originally_graduated_at are
-    substituted, no model-filled sentence."""
+
+    Slipping-surface contract (v1.0.10): the regression banner is the
+    one place where the CANONICAL negative name surfaces in a user-
+    facing banner. A previously-mastered bad habit just came back —
+    the user needs to recognize the slip in the same language they
+    learned to fear. Positive frame here ("slipping on testing before
+    committing") would soften the lapse signal. Heading reads
+    "Bad habit returned:" not "Regressed:" to make the lapse explicit.
+    """
     bodies_terminal: list[str] = []
     bodies_ide: list[str] = []
     for r in regs:
         if not isinstance(r, dict):
             continue
         rid = r.get("id", "?")
-        # display_name is the single source of truth: curated override →
-        # profile.name → humanized slug. Marker name is intentionally
-        # ignored here so a curated WORDING_OVERRIDES entry always wins
-        # over whatever wording the marker happened to carry at write time.
+        # Canonical name — slipping surface, not earning. display_name
+        # is authoritative; the marker's own `name` field is ignored.
         rname = _display_name(rid, profile) if rid != "?" else rid
         originally_at = r.get("originally_graduated_at", "?")
         sentence = (
@@ -585,8 +594,12 @@ def _regression_block(
             f"(was graduated {originally_at}). Re-earn mastery by staying "
             f"clean for 5 Coach insights runs."
         )
-        bodies_terminal.append(f"> ⚠️ **Regressed: {rname}** — {sentence}")
-        bodies_ide.append(f"⚠️ **Regressed** — `{rname}`\n{sentence}")
+        bodies_terminal.append(
+            f"> ⚠️ **Bad habit returned: {rname}** — {sentence}"
+        )
+        bodies_ide.append(
+            f"⚠️ **Bad habit returned** — `{rname}`\n{sentence}"
+        )
     if not bodies_terminal:
         return ""
     if env == "ide":
@@ -600,26 +613,39 @@ def _streak_reward_block(
 ) -> str:
     """Pre-rendered mid-streak reward banners. Small wins — tighter than
     graduations so they feel like dopamine pulses, not ceremonies.
-    Direction-aware glyph: positive→↑, negative→↓."""
+
+    Earning-surface contract (v1.0.10): the row leads with `↑` for both
+    directions (the arrow tracks direction-of-XP-movement, always up)
+    and the displayed name is the POSITIVE INVERSE for negative-
+    direction patterns (e.g. `commit-without-testing` →
+    "testing before committing"). The user just took the positive
+    action; the row names it. Pass C upstream supplies `positive_name`
+    via display_name(positive_frame=True); we fall back to a fresh
+    resolve if Pass C wasn't run (degraded path / direct callers).
+    """
     bodies_terminal: list[str] = []
     bodies_ide: list[str] = []
     for r in rewards:
         if not isinstance(r, dict):
             continue
         rid = r.get("id", "?")
-        # See _regression_block: display_name is authoritative; the
-        # marker's `name` field is intentionally ignored so curated
-        # overrides win over whatever the marker carried at write time.
-        rname = _display_name(rid, profile) if rid != "?" else rid
+        direction = r.get("direction", "negative")
+        if rid == "?":
+            rname = rid
+        elif direction == "negative":
+            rname = r.get("positive_name") or _display_name(
+                rid, profile, positive_frame=True
+            )
+        else:
+            rname = r.get("name") or _display_name(rid, profile)
         streak = int(r.get("streak", 0))
         target = int(r.get("target", 5))
         xp = int(r.get("xp_awarded", 1))
-        direction = r.get("direction", "negative")
         filled = _streak_bar(streak, target, fill_glyph="🟢")
-        arrow = "↑" if direction == "positive" else "↓"
-        # Streak rewards are always positive XP credits (merge.py's
-        # add_milestone_xp adds `xp_awarded` to lifetime XP). The arrow
-        # carries direction; the number carries the actual credit sign.
+        # Arrow is always ↑: this is an earning surface, direction is
+        # of-XP-movement (always up) not direction-of-pattern (which is
+        # already encoded by the row's inverted name).
+        arrow = "↑"
         signed_xp = f"+{xp}"
         bodies_terminal.append(
             f"> {arrow} `{rname}` `{filled}` {streak}/{target} · `{signed_xp}`"
@@ -638,15 +664,22 @@ def _streak_reward_block(
 def _graduation_block(
     grads: list, env: str = "terminal", profile: dict | None = None
 ) -> str:
-    """Pre-rendered graduation banners. Direction-picked in Python:
-    positive→MASTERED 🌟, negative→GRADUATED ⚡️. Body sentence is
-    templated, not model-filled."""
+    """Pre-rendered graduation banners. Both directions land on the
+    "MASTERED" word — the glyph distinguishes origin (🌟 reinforced
+    strength vs ⚡️ retired weakness). Body sentence is templated.
+
+    Earning-surface contract (v1.0.10): negative-direction graduations
+    use the POSITIVE INVERSE name (e.g. `commit-without-testing` →
+    "testing before committing"), matching the user's emotional state
+    — they earned the ceremony by doing the good thing 5 runs in a row.
+    """
     positive_sentence = (
         "5 consecutive Coach insights runs detected this habit — "
         "it's now a core strength."
     )
     negative_sentence = (
-        "5 clean Coach insights runs in a row — weakness retired."
+        "5 clean Coach insights runs in a row — habit locked in, "
+        "removed from watchlist."
     )
     bodies_terminal: list[str] = []
     bodies_ide: list[str] = []
@@ -654,11 +687,16 @@ def _graduation_block(
         if not isinstance(g, dict):
             continue
         gid = g.get("id", "?")
-        # See _regression_block: display_name is authoritative; the
-        # marker's `name` field is intentionally ignored so curated
-        # overrides win over whatever the marker carried at write time.
-        gname = _display_name(gid, profile) if gid != "?" else gid
         direction = g.get("direction", "negative")
+        # Negative-direction graduations are earning surfaces — use the
+        # positive inverse name. Positive-direction graduations use the
+        # canonical name (already positive).
+        if gid != "?":
+            gname = _display_name(
+                gid, profile, positive_frame=(direction == "negative")
+            )
+        else:
+            gname = gid
         if direction == "positive":
             sentence = positive_sentence
             term_head = f"> 🎓🌟 **MASTERED: {gname}**  `+5 XP`"
@@ -670,8 +708,8 @@ def _graduation_block(
             )
         else:
             sentence = negative_sentence
-            term_head = f"> 🎓⚡️ **GRADUATED: {gname}**  `+5 XP`"
-            ide_head = f"🎓 **GRADUATED** ⚡ — `{gname}` · `+5 XP`"
+            term_head = f"> 🎓⚡️ **MASTERED: {gname}**  `+5 XP`"
+            ide_head = f"🎓 **MASTERED** ⚡ — `{gname}` · `+5 XP`"
             full_bar = _streak_bar(
                 GRADUATION_STREAK_TARGET,
                 GRADUATION_STREAK_TARGET,
@@ -751,18 +789,23 @@ def _assemble_celebrate_block(
     graduated_ids = {g.get("id") for g in (grads or []) if isinstance(g, dict) and g.get("id")}
     streak_rewards = [s for s in streak_rewards if s.get("id") not in graduated_ids]
 
-    # Pass C: normalize each reward's `name` field via display_name so
-    # both the default-theme and bespoke-theme render paths see the same
-    # user-facing wording (override → profile.name → humanized slug).
-    # display_name is authoritative — the marker's own `name` field is
-    # ignored so a curated WORDING_OVERRIDES entry always wins over
+    # Pass C: normalize each reward with BOTH the canonical name and
+    # the positive-inverse name so default-shape (earning surface)
+    # consumers read `positive_name` while bespoke-theme consumers
+    # read `name`. display_name is authoritative — the marker's own
+    # `name` field is ignored so a curated override always wins over
     # whatever wording the marker carried at write time. We rebuild
     # dicts to avoid mutating the marker payload.
     normalized: list[dict] = []
     for s in streak_rewards:
         sid = s.get("id", "?")
-        display = _display_name(sid, profile) if sid != "?" else sid
-        normalized.append({**s, "name": display})
+        if sid != "?":
+            canonical = _display_name(sid, profile)
+            positive = _display_name(sid, profile, positive_frame=True)
+        else:
+            canonical = sid
+            positive = sid
+        normalized.append({**s, "name": canonical, "positive_name": positive})
     streak_rewards = normalized
 
     has_any = bool(levelup) or bool(grads) or bool(regs) or bool(streak_rewards)
@@ -1745,10 +1788,14 @@ def _completion_banner(
         spec = entry.get("spec") or {}
         kind = entry.get("kind", "weakness")
         entry_id = entry.get("entry_id") or ""
-        # Display name resolves curated → profile.name → humanized slug.
-        # Skill cases keep the slash-command form (`/{entry_id}`) since
-        # that's a literal command the user types, not a pattern label.
-        entry_display = _display_name(entry_id, profile)
+        # Earning-surface contract (v1.0.10): weakness-tip acks fire
+        # when the user just took the positive action — name the action,
+        # not the bad habit. Strength acks already render the positive
+        # pattern. Skill kind uses the literal slash-command form
+        # downstream so the display name here is unused for that branch.
+        entry_display = _display_name(
+            entry_id, profile, positive_frame=(kind == "weakness")
+        )
         streak = int(
             entry.get("positive_streak" if kind == "strength" else "clean_streak", 0)
         )
