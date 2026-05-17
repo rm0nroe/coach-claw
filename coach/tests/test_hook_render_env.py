@@ -436,7 +436,11 @@ def test_completion_banner_ide_weakness(cup):
     assert "edits-without-testing" not in block        # slug must not leak
     assert "`edits without testing`" not in block      # canonical neg must NOT leak
     assert "`+2 XP banked`" in block
-    assert "`streak 🟢🟢⚪⚪⚪ advances next /coach-insights`" in block
+    assert "`streak 🟢🟢⚪⚪⚪`" in block
+    # v0.1.19+: internal /coach-insights mechanic must NOT leak to user
+    # — system is automatic by nature; bar speaks for itself.
+    assert "/coach-insights" not in block
+    assert "advances" not in block
 
 
 def test_completion_banner_ide_strength(cup):

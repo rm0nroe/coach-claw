@@ -212,10 +212,10 @@ def test_atomic_no_partial_write_on_failure(tmp_path, env_under_plugin, monkeypa
 
 def test_rewrites_cli_wrap_to_plugin_shape(tmp_path, env_under_plugin):
     """ours-wrapped pointing at the CLI trampoline → switch rewrites it
-    to point at the plugin's bootstrap.sh + statusline_wrap.py. Saved
-    original (`.statusline-wrap.json`) is untouched — coach state is
-    shared between distributions."""
-    plugin_root, _ = env_under_plugin
+    to point at the plugin trampoline under coach_dir. Saved original
+    (`.statusline-wrap.json`) is untouched — coach state is shared
+    between distributions."""
+    plugin_root, coach_dir = env_under_plugin
     settings = tmp_path / "settings.json"
     settings.write_text(json.dumps({
         "statusLine": {
@@ -227,19 +227,19 @@ def test_rewrites_cli_wrap_to_plugin_shape(tmp_path, env_under_plugin):
     assert rc == 0
 
     new_cmd = json.loads(settings.read_text())["statusLine"]["command"]
-    assert str(plugin_root) in new_cmd
-    assert "bootstrap.sh" in new_cmd
+    # v0.1.22+: plugin shape routes through stable trampoline; plugin_root
+    # is held in .plugin-root cache, NOT embedded in the command.
+    assert "plugin-statusline.sh" in new_cmd
     assert "statusline_wrap.py" in new_cmd
     assert "default-statusline-wrap-command.sh" not in new_cmd
+    assert str(plugin_root) not in new_cmd
 
 
 def test_noop_when_already_plugin_wrap_shape(tmp_path, env_under_plugin):
-    """If the wrap shape already points at the plugin, switch is a no-op
-    (no double-rewrite, no churn)."""
-    plugin_root, _ = env_under_plugin
-    plugin_cmd = (
-        f"{plugin_root}/bin/bootstrap.sh {plugin_root}/bin/statusline_wrap.py"
-    )
+    """If the wrap shape already points at the trampoline, switch is a
+    no-op (no double-rewrite, no churn)."""
+    _, coach_dir = env_under_plugin
+    plugin_cmd = f"bash {coach_dir / 'plugin-statusline.sh'} statusline_wrap.py"
     settings = tmp_path / "settings.json"
     settings.write_text(json.dumps({
         "statusLine": {"type": "command", "command": plugin_cmd},
@@ -286,7 +286,7 @@ def test_rewrite_quotes_plugin_paths_with_spaces(tmp_path, monkeypatch):
     _desired_entry: a CLAUDE_PLUGIN_ROOT containing spaces must produce
     a settings.json command string that bash parses as exactly two
     tokens. Pre-v0.1.6 the unquoted f-string interpolation generated
-    `/tmp/.../Plugin Dir/bin/bootstrap.sh /tmp/.../Plugin Dir/bin/...`
+    `/tmp/.../Plugin Dir/bin/run.sh /tmp/.../Plugin Dir/bin/...`
     which shlex.split breaks into 4+ tokens, ENOENT'ing under bash."""
     plugin_root = tmp_path / "Plugin Dir With Spaces"
     (plugin_root / "bin").mkdir(parents=True)
@@ -306,32 +306,32 @@ def test_rewrite_quotes_plugin_paths_with_spaces(tmp_path, monkeypatch):
 
     new_cmd = json.loads(settings.read_text())["statusLine"]["command"]
     tokens = shlex.split(new_cmd)
-    assert len(tokens) == 2, (
-        f"plugin_root paths split by bash; tokens={tokens!r} cmd={new_cmd!r}"
-    )
-    assert tokens[0] == str(plugin_root / "bin" / "bootstrap.sh")
-    assert tokens[1] == str(plugin_root / "bin" / "statusline_wrap.py")
+    assert tokens == [
+        "bash",
+        str(coach_dir / "plugin-statusline.sh"),
+        "statusline_wrap.py",
+    ]
 
 
 def test_rewrite_command_executes_under_bash_with_spaces(tmp_path, monkeypatch):
     """End-to-end: the rewritten command must actually run under
-    `bash -c` without ENOENT when CLAUDE_PLUGIN_ROOT has a space.
+    `bash -c` without ENOENT when COACH_CONFIG_DIR has a space.
     Mirrors test_install_auto_wraps_claimed_statusline's exec guard
     from v0.1.5."""
     plugin_root = tmp_path / "Plugin Dir With Spaces"
     plugin_bin = plugin_root / "bin"
     plugin_bin.mkdir(parents=True)
     # Stand-in scripts so bash actually has something to exec on the
-    # generated command path. Doesn't matter what they print — just
-    # has to be findable + executable.
-    (plugin_bin / "bootstrap.sh").write_text("#!/bin/bash\nexec \"$@\"\n")
+    # generated command path. The trampoline reads .plugin-root and
+    # exec's the plugin's run.sh + statusline_wrap.py.
+    (plugin_bin / "run.sh").write_text("#!/bin/bash\nexec \"$@\"\n")
     (plugin_bin / "statusline_wrap.py").write_text(
         "#!/usr/bin/env python3\nprint('ok')\n"
     )
-    (plugin_bin / "bootstrap.sh").chmod(0o755)
+    (plugin_bin / "run.sh").chmod(0o755)
     (plugin_bin / "statusline_wrap.py").chmod(0o755)
 
-    coach_dir = tmp_path / "coach"
+    coach_dir = tmp_path / "Coach Dir With Spaces"
     monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(plugin_root))
     monkeypatch.setenv("COACH_CONFIG_DIR", str(coach_dir))
 
@@ -347,11 +347,15 @@ def test_rewrite_command_executes_under_bash_with_spaces(tmp_path, monkeypatch):
     new_cmd = json.loads(settings.read_text())["statusLine"]["command"]
     bash_path = shutil.which("bash")
     assert bash_path
+    # Trampoline body sources its config via COACH_CONFIG_DIR — pass
+    # through so the spawned subprocess finds the same path the rewrite
+    # baked into the command.
     proc = subprocess.run(
         [bash_path, "-c", new_cmd],
         capture_output=True,
         text=True,
         timeout=10,
+        env={**os.environ, "COACH_CONFIG_DIR": str(coach_dir)},
     )
     assert proc.returncode == 0, (
         f"rewritten command failed under bash -c — likely unquoted "

@@ -16,6 +16,14 @@
 #
 # Example (in a SKILL.md heredoc):
 #   ${CLAUDE_PLUGIN_ROOT}/bin/run.sh ${CLAUDE_PLUGIN_ROOT}/bin/configure.py preview
+#
+# Claude Code injects CLAUDE_PLUGIN_ROOT for skill/hook invocations but
+# NOT for raw `statusLine.command` strings in settings.json. Self-
+# resolve from BASH_SOURCE so the script works in both contexts.
+if [ -z "${CLAUDE_PLUGIN_ROOT:-}" ]; then
+  CLAUDE_PLUGIN_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+  export CLAUDE_PLUGIN_ROOT
+fi
 
 DATA_DIR="${CLAUDE_PLUGIN_DATA:-$HOME/.claude/plugins/data/coach-claw}"
 REQ="${CLAUDE_PLUGIN_ROOT}/requirements.txt"

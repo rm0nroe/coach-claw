@@ -100,6 +100,51 @@ def test_bootstrap_script_is_executable():
     )
 
 
+def test_bootstrap_self_resolves_plugin_root_when_env_unset(fake_plugin):
+    """bootstrap.sh must work when CLAUDE_PLUGIN_ROOT is NOT in the env.
+
+    Claude Code injects the env var for plugin-registered hooks but NOT
+    for raw `statusLine.command` strings in settings.json (where the
+    plugin's statusline_self_patch writes an absolute path to
+    bootstrap.sh). Without the self-resolve, exec
+    "${CLAUDE_PLUGIN_ROOT}/bin/run.sh" expands to "/bin/run.sh" and
+    fails with exit 126 — manifesting as a blank statusline for the
+    user. Regression for v0.1.17 — DO NOT remove."""
+    root, data = fake_plugin
+    env = {
+        **{k: v for k, v in os.environ.items() if k != "CLAUDE_PLUGIN_ROOT"},
+        "CLAUDE_PLUGIN_DATA": str(data),
+    }
+    env.pop("CLAUDE_PLUGIN_ROOT", None)  # explicit — fixture env may bleed
+    result = subprocess.run(
+        [str(root / "bin" / "bootstrap.sh"), "-c", "print('SELF_RESOLVED')"],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert result.returncode == 0, (
+        f"bootstrap.sh failed without CLAUDE_PLUGIN_ROOT in env "
+        f"(rc={result.returncode})\nstdout: {result.stdout}\n"
+        f"stderr: {result.stderr}"
+    )
+    assert "SELF_RESOLVED" in result.stdout
+    # And run.sh stand-alone too (same self-resolve)
+    result = subprocess.run(
+        [str(root / "bin" / "run.sh"), "-c", "print('RUN_SH_SELF_RESOLVED')"],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert result.returncode == 0, (
+        f"run.sh failed without CLAUDE_PLUGIN_ROOT in env "
+        f"(rc={result.returncode})\nstdout: {result.stdout}\n"
+        f"stderr: {result.stderr}"
+    )
+    assert "RUN_SH_SELF_RESOLVED" in result.stdout
+
+
 def test_bootstrap_falls_back_when_venv_missing(tmp_path):
     """If venv setup fails (e.g., python3 -m venv unavailable on the
     box), bootstrap should still exec system python3 so the hook's

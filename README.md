@@ -162,6 +162,29 @@ one-time banner suggesting `npx @rm0nroe/coach-claw@latest launchd`.
 The cron stays an npm-CLI feature because the plugin model has no
 equivalent for OS-level scheduling.
 
+### Updating the plugin
+
+Plugin updates are a two-phase flow — catalog refresh, then package
+update. Skipping the refresh leaves Claude Code's catalog stale, and
+`/plugin update` will report "already at latest" even when a newer
+version exists on the marketplace.
+
+```
+/plugin marketplace update coach-claw-plugins      # refresh catalog
+/plugin update coach-claw@coach-claw-plugins       # install new version
+/reload-plugins                                    # bind new hooks (or restart)
+```
+
+Verify the cache picked up the new version:
+
+```bash
+ls ~/.claude/plugins/cache/coach-claw-plugins/coach-claw/
+```
+
+The shortcut: `/plugin` (no args) opens the marketplace TUI — refresh
++ update happen in one flow. Same two-phase mechanic underneath; the
+UI just hides the seam.
+
 ### Troubleshooting
 
 **`ERROR: could not install PyYAML automatically` on macOS**

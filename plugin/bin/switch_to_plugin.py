@@ -118,8 +118,11 @@ def _strip_cli_statusline(data: dict, plugin_root: str) -> bool:
 
 def _rewrite_cli_wrap_to_plugin(data: dict, plugin_root: str) -> bool:
     """If the statusLine is the CLI wrap-shape trampoline AND we have a
-    plugin_root to rewrite to, replace it with the plugin wrap shape.
-    Preserves `.statusline-wrap.json` (operate on settings.json only).
+    plugin_root to rewrite to, replace it with the plugin wrap shape
+    (stable trampoline under coach_dir). Preserves
+    `.statusline-wrap.json` (operate on settings.json only). Also
+    writes the .plugin-root cache so the trampoline can resolve the
+    active plugin path at exec time.
 
     Returns True when rewritten, False when nothing to do (no statusLine,
     not a wrap shape, or already plugin shape).
@@ -133,13 +136,21 @@ def _rewrite_cli_wrap_to_plugin(data: dict, plugin_root: str) -> bool:
     # Skip if not the CLI wrap trampoline.
     if CLI_WRAP_TRAMPOLINE not in cmd:
         return False
-    # Already pointing at the plugin's bin/ — leave alone.
-    if PLUGIN_WRAP_SCRIPT in cmd and plugin_root in cmd:
+    coach_dir = resolve_coach_dir()
+    plugin_trampoline = coach_dir / "plugin-statusline.sh"
+    # Already pointing at the plugin trampoline — leave alone.
+    if str(plugin_trampoline) in cmd and PLUGIN_WRAP_SCRIPT in cmd:
         return False
-    pr = Path(plugin_root)
-    bootstrap = shlex.quote(str(pr / "bin" / "bootstrap.sh"))
-    wrap_py = shlex.quote(str(pr / "bin" / "statusline_wrap.py"))
-    new_cmd = f"{bootstrap} {wrap_py}"
+    # Materialize the trampoline + .plugin-root cache so the new
+    # command actually resolves on next render. Imported lazily so a
+    # missing statusline_self_patch (unlikely) doesn't block hook strip.
+    try:
+        from statusline_self_patch import ensure_trampoline_installed  # noqa: WPS433
+        ensure_trampoline_installed(coach_dir, Path(plugin_root))
+    except Exception:
+        pass
+    quoted_trampoline = shlex.quote(str(plugin_trampoline))
+    new_cmd = f"bash {quoted_trampoline} {PLUGIN_WRAP_SCRIPT}"
     data["statusLine"] = {"type": "command", "command": new_cmd}
     return True
 

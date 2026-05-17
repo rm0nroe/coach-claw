@@ -16,6 +16,15 @@
 #
 # Invocation (from hooks/hooks.json):
 #   ${CLAUDE_PLUGIN_ROOT}/bin/bootstrap.sh ${CLAUDE_PLUGIN_ROOT}/hooks/coach-session-start.py
+#
+# Claude Code injects CLAUDE_PLUGIN_ROOT for plugin-registered hook
+# invocations, but NOT for raw `statusLine.command` strings in
+# settings.json. Self-resolve from BASH_SOURCE so the script works in
+# both contexts (hook fire + statusLine fire).
+if [ -z "${CLAUDE_PLUGIN_ROOT:-}" ]; then
+  CLAUDE_PLUGIN_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+  export CLAUDE_PLUGIN_ROOT
+fi
 
 # Coexistence guard: defer to the npm CLI distribution if its hooks are
 # already registered in ~/.claude/settings.json. Cheap (single read).

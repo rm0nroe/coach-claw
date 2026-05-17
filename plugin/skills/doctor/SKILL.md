@@ -1,5 +1,5 @@
 ---
-description: "Diagnose Coach Claw plugin state — install, statusLine, cron, venv, defer marker. Also cleans up the statusLine key on uninstall. Usage: /coach-claw:doctor [--remove-statusline] [--json]"
+description: "Diagnose Coach Claw plugin state — install, statusLine, cron, venv, defer marker. Also cleans up the statusLine key on uninstall and prunes old cache dirs. Usage: /coach-claw:doctor [--remove-statusline] [--prune-cache [--dry-run]] [--json]"
 ---
 
 The plugin and the npm CLI distribution coexist on the same box; both
@@ -20,9 +20,17 @@ The argument after `/coach-claw:doctor` is one of:
   `~/.claude/settings.json` (only if it currently points at Coach;
   otherwise no-op). Use this BEFORE running `/plugin uninstall
   coach-claw` if you want a clean uninstall.
+- `--prune-cache` — remove `~/.claude/plugins/cache/coach-claw-plugins/
+  coach-claw/<version>/` dirs older than the active version. Claude
+  Code's `/plugin update` never garbage-collects prior versions; over
+  time these accumulate disk space. Active version is read from
+  `installed_plugins.json`; never touches it. Combines with
+  `--dry-run` to preview.
+- `--dry-run` — pairs with `--prune-cache` only. Lists what would be
+  removed without deleting.
 - `--json` — emit the same probe results as machine-readable JSON.
   Useful for bug-report triage. Cannot combine with
-  `--remove-statusline`.
+  `--remove-statusline` or `--prune-cache`.
 
 ## Steps
 

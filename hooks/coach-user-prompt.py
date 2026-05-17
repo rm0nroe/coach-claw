@@ -405,27 +405,74 @@ def _read_and_consume(path: Path, session_key: str | None, now: datetime) -> dic
         return None
 
 
+def _plugin_install_descriptor() -> tuple[str, str]:
+    """Return (version, install_path) for the active plugin install.
+
+    Pulls from CLAUDE_PLUGIN_ROOT env (set by Claude Code on every
+    plugin hook invocation). Falls back to ("?", "?") if the env is
+    missing or unparseable — the banner is best-effort context, not
+    load-bearing for correctness."""
+    root = os.environ.get("CLAUDE_PLUGIN_ROOT", "")
+    if not root:
+        return ("?", "?")
+    # CLAUDE_PLUGIN_ROOT format:
+    #   ~/.claude/plugins/cache/<marketplace>/<plugin>/<version>
+    # Version is the basename. Keep install path as-is for copy-paste.
+    try:
+        version = Path(root).name or "?"
+    except Exception:
+        version = "?"
+    return (version, root)
+
+
 def _cron_nudge_block(env: str = "terminal") -> str:
     """Pre-rendered one-time banner pointing plugin-only users at the
     npm CLI for OS-level cron registration. The plugin model can't
     register launchd/cron itself; without the cron, profile.yaml never
     gets the daily deterministic refresh."""
     title = "Daily insights need OS scheduling"
-    body_lines = [
-        "Coach's daily deterministic insights pass runs from launchd "
-        "(macOS) or cron (Linux), which the plugin model can't "
-        "register on its own.",
-        "Run `npx @rm0nroe/coach-claw launchd` (macOS) or add a "
-        "crontab line for `~/.claude/coach/bin/insights.sh 1d` "
-        "(Linux) to keep `profile.yaml` fresh.",
-        "This nudge fires once per install.",
-    ]
+    version, install_path = _plugin_install_descriptor()
+    macos_cmd = "npx @rm0nroe/coach-claw launchd"
+    linux_cron = (
+        "0 4 * * * $HOME/.claude/coach/bin/insights.sh 1d "
+        ">> /tmp/claude-coach.log 2>&1"
+    )
+    verify = "tail -f /tmp/claude-coach.log"
     if env == "ide":
-        body = f"📅 **{title}**\n\n" + "\n\n".join(body_lines)
+        body = (
+            f"📅 **{title}**\n\n"
+            f"Coach Claw plugin v{version} installed at `{install_path}`.\n\n"
+            "The plugin can't register OS schedulers on its own. "
+            "Without one, `profile.yaml` only refreshes on the weekly "
+            "LLM-driven path (~every 7d).\n\n"
+            f"Register the daily cron:\n\n"
+            f"  macOS: `{macos_cmd}`\n\n"
+            f"  Linux: `crontab -e` then add `{linux_cron}`\n\n"
+            f"Verify after next 04:00 local: `{verify}`\n\n"
+            "This nudge fires once per install."
+        )
         return _hr_frame_stack([body])
     return (
-        f"> 📅 **{title}**\n>\n"
-        + "\n>\n".join(f"> {line}" for line in body_lines)
+        f"> 📅 **{title}**\n"
+        ">\n"
+        f"> Coach Claw plugin v{version} installed at\n"
+        f"> `{install_path}`.\n"
+        ">\n"
+        "> The plugin can't register OS schedulers on its own. "
+        "Without one,\n"
+        "> `profile.yaml` only refreshes on the weekly LLM-driven "
+        "path (~every 7d).\n"
+        ">\n"
+        "> Register the daily cron:\n"
+        ">\n"
+        "> ```\n"
+        f"> {macos_cmd}     # macOS\n"
+        f"> # Linux: crontab -e then add:\n"
+        f"> # {linux_cron}\n"
+        "> ```\n"
+        ">\n"
+        f"> Verify after next 04:00 local: `{verify}`.\n"
+        "> This nudge fires once per install."
     )
 
 
@@ -445,7 +492,7 @@ def _maybe_cron_nudge_block(env: str = "terminal") -> str | None:
         from cron_check import is_cron_registered
         if is_cron_registered():
             return None
-        block = _cron_nudge_block(env)
+        banner = _cron_nudge_block(env)
         # Persist marker so the nudge fires exactly once. Ignore write
         # failures — re-nudging on the next prompt is a minor regression,
         # not a correctness bug.
@@ -456,9 +503,81 @@ def _maybe_cron_nudge_block(env: str = "terminal") -> str | None:
             }))
         except Exception:
             pass
-        return block
+        # Wrap in <coach-install-summary> with explicit surface-verbatim
+        # instructions. Without this framing, the model treats the banner
+        # as ambient context and buries it — same bug class as the
+        # pre-v0.4.1 delegated-rendering issue documented in CLAUDE.md
+        # under "Celebrate banners are pre-rendered verbatim".
+        return (
+            "<coach-install-summary>\n"
+            "This is a one-shot post-install summary for the Coach "
+            "Claw plugin. The banner below was pre-rendered by the "
+            "install-nudge hook (fires exactly once per install, "
+            "gated by ~/.claude/coach/.cron-nudged marker). You "
+            "MUST render the banner VERBATIM at the very TOP of "
+            "your next response, BEFORE any other content — before "
+            "tool use, before answering the user's question, "
+            "before any commentary. Then continue with the user's "
+            "actual request below the banner.\n\n"
+            "Do NOT paraphrase, summarize, or shorten the banner. "
+            "Do NOT wrap it in your own framing or commentary. Do "
+            "NOT move it to the end of the response. Do NOT skip "
+            "it because \"it looks like context, not user-facing\" "
+            "— this IS the user-facing install summary, and if you "
+            "do not surface it the user will not know the daily-"
+            "insights cron needs separate OS-level registration.\n\n"
+            "BANNER (render verbatim):\n\n"
+            f"{banner}\n"
+            "</coach-install-summary>"
+        )
     except Exception:
         return None
+
+
+_UNINSTALL_PROMPT_PATTERN = re.compile(
+    r"^\s*/plugin\s+uninstall\s+coach-claw@coach-claw-plugins\s*$",
+    re.IGNORECASE,
+)
+
+
+def _is_coach_plugin_uninstall(prompt_text: str) -> bool:
+    """Match `/plugin uninstall coach-claw@coach-claw-plugins` exactly.
+
+    Conservative — only matches the canonical full form. Variants like
+    `/plugin uninstall coach-claw` (no marketplace suffix) are NOT
+    intercepted. Users typing the short form trade the warning for
+    speed; the canonical form is what tooling + docs recommend.
+    """
+    if not prompt_text:
+        return False
+    return _UNINSTALL_PROMPT_PATTERN.match(prompt_text) is not None
+
+
+def _uninstall_intercept_message() -> str:
+    """Stderr message emitted when uninstall is intercepted (exit 2).
+
+    Plain text — Claude Code renders stderr inline as an error banner.
+    No markdown, no blockquote prefix; the terminal shows it verbatim."""
+    return (
+        "\n"
+        "⚠️  Coach Claw — clean-up step required before uninstall\n"
+        "\n"
+        "Claude Code's /plugin uninstall does NOT clean up the plugin's\n"
+        "statusLine entry in ~/.claude/settings.json. Run the prep step\n"
+        "first so the entry is removed cleanly.\n"
+        "\n"
+        "Default (preserves XP, rank, banked sessions, .user_config.json):\n"
+        "\n"
+        "    /coach-claw:doctor --uninstall-prep\n"
+        "\n"
+        "OR full wipe (archives profile to ~/.claude/coach.bak.<TS>/ —\n"
+        "reversible with `mv` back):\n"
+        "\n"
+        "    /coach-claw:doctor --uninstall-prep --wipe-data\n"
+        "\n"
+        "Then re-run /plugin uninstall coach-claw@coach-claw-plugins.\n"
+        "\n"
+    )
 
 
 def _wrap_announce_block(env: str = "terminal") -> str:
@@ -1827,7 +1946,7 @@ def _completion_banner(
                     banner = (
                         f"  ---\n"
                         f"  ✅ **{tip_cleared}** — `{entry_display}` · `{label}` · "
-                        f"`+{xp} XP banked` · `streak {bar} advances next /coach-insights`\n"
+                        f"`+{xp} XP banked` · `streak {bar}`\n"
                         f"\n"
                         f"  ---"
                     )
@@ -1862,7 +1981,7 @@ def _completion_banner(
             streak_label = "strength streak" if kind == "strength" else "streak"
             banner = (
                 f"  > ✅ **{prefix}** — {label} · `+{xp} XP` · "
-                f"`{entry_display}` {streak_label} {bar} (advances on next /coach-insights run)"
+                f"`{entry_display}` {streak_label} {bar}"
             )
         else:
             xp = int(spec.get("xp", 0) or 0)
@@ -2268,6 +2387,23 @@ def main() -> None:
                     payload = parsed
         except Exception:
             payload = {}
+
+        # v0.1.20: intercept `/plugin uninstall coach-claw@coach-claw-plugins`
+        # to remind the user about the pre-uninstall cleanup step. Claude
+        # Code's /plugin uninstall is not extensible — no lifecycle hooks —
+        # so the plugin's statusLine entry persists in settings.json after
+        # uninstall, and the user has no in-product warning. This hook
+        # fires AT uninstall attempt, blocks the prompt via exit 2, and
+        # surfaces the cleanup instructions inline. Gated on
+        # CLAUDE_PLUGIN_ROOT so CLI users (who don't have /plugin) never
+        # see it.
+        if os.environ.get("CLAUDE_PLUGIN_ROOT"):
+            prompt_text = str(payload.get("prompt") or payload.get("user_prompt") or "")
+            if _is_coach_plugin_uninstall(prompt_text):
+                marker = COACH_DIR / ".uninstall-prepped"
+                if not marker.exists():
+                    sys.stderr.write(_uninstall_intercept_message())
+                    sys.exit(2)
 
         # Real Claude Code UserPromptSubmit events always carry session_id
         # and/or transcript_path. Without one (ad-hoc smoke test or

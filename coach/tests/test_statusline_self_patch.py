@@ -17,6 +17,16 @@ import pytest
 import statusline_self_patch as sp
 
 
+@pytest.fixture(autouse=True)
+def _isolate_coach_dir(tmp_path, monkeypatch):
+    """v0.1.22+: ensure_statusline_installed now writes a trampoline
+    + .plugin-root cache under coach_dir on every call. Without
+    isolation, tests would scribble into the real ~/.claude/coach. Set
+    COACH_CONFIG_DIR so resolve_coach_dir() returns the per-test
+    tmpdir for any test that doesn't pass coach_dir explicitly."""
+    monkeypatch.setenv("COACH_CONFIG_DIR", str(tmp_path / "coach"))
+
+
 @pytest.fixture
 def settings(tmp_path):
     """Return a settings.json path inside tmp_path. Caller writes it."""
@@ -30,7 +40,14 @@ def plugin_root(tmp_path):
     return root
 
 
-def test_inserts_statusline_when_absent(settings, plugin_root):
+@pytest.fixture
+def coach_dir(tmp_path):
+    """Trampoline + marker dir under tmp_path (matches the path the
+    autouse fixture sets via COACH_CONFIG_DIR)."""
+    return tmp_path / "coach"
+
+
+def test_inserts_statusline_when_absent(settings, plugin_root, coach_dir):
     settings.write_text(json.dumps({}))
     result = sp.ensure_statusline_installed(str(plugin_root), settings_path=settings)
     assert result == "installed"
@@ -38,11 +55,21 @@ def test_inserts_statusline_when_absent(settings, plugin_root):
     written = json.loads(settings.read_text())
     assert "statusLine" in written
     cmd = written["statusLine"]["command"]
-    assert "bootstrap.sh" in cmd
+    # v0.1.22+: command routes through the stable trampoline under
+    # coach_dir, NOT the versioned plugin_root path. The trampoline
+    # script + .plugin-root cache are written under coach_dir.
+    assert sp.TRAMPOLINE_NAME in cmd
     assert "default_statusline.py" in cmd
+    # plugin_root must NOT appear directly in the settings.json command —
+    # that's the whole point of the trampoline indirection.
+    assert str(plugin_root) not in cmd
     # Absolute path (no ${CLAUDE_PLUGIN_ROOT} placeholder; that wouldn't
     # expand inside settings.json).
     assert "${CLAUDE_PLUGIN_ROOT}" not in cmd
+    # Trampoline + cache file written under coach_dir.
+    assert (coach_dir / sp.TRAMPOLINE_NAME).exists()
+    cache = (coach_dir / sp.PLUGIN_ROOT_CACHE_NAME).read_text().strip()
+    assert cache == str(plugin_root.resolve())
 
 
 def test_preserves_other_keys(settings, plugin_root):
@@ -139,13 +166,20 @@ def test_claimed_when_user_script_integrates_coach(
     assert disabled["reason"] == "already-integrated"
 
 
-def test_recognizes_wrapped_statusline_as_ours(settings, plugin_root):
-    """ours-wrapped pointing at the CURRENT plugin_root → matched no-op
-    (the wrap shape is recognized as ours, no rewrite)."""
+def test_recognizes_wrapped_statusline_as_ours(settings, plugin_root, coach_dir, tmp_path):
+    """ours-wrapped pointing at the CURRENT trampoline shape → matched
+    no-op (no rewrite). Legacy versioned-plugin wrap commands are now
+    migrated on encounter; only trampoline-shape commands are stable."""
+    # Pre-write a wrap marker so the action treats it as ours-wrapped.
+    coach_dir.mkdir(parents=True, exist_ok=True)
+    (coach_dir / ".statusline-wrap.json").write_text(json.dumps({
+        "original_command": "bash /opt/x.sh",
+    }))
+    trampoline_path = coach_dir / sp.TRAMPOLINE_NAME
     settings.write_text(json.dumps({
         "statusLine": {
             "type": "command",
-            "command": f"{plugin_root}/bin/bootstrap.sh {plugin_root}/bin/statusline_wrap.py",
+            "command": f"bash {trampoline_path} statusline_wrap.py",
         },
     }))
     result = sp.ensure_statusline_installed(str(plugin_root), settings_path=settings)
@@ -153,22 +187,21 @@ def test_recognizes_wrapped_statusline_as_ours(settings, plugin_root):
 
 
 def test_refreshes_stale_plugin_path_on_wrapped(
-    settings, plugin_root, tmp_path, monkeypatch
+    settings, plugin_root, coach_dir
 ):
-    """ours-wrapped pointing at a stale plugin version dir → patcher
-    rewrites with the current plugin_root."""
-    coach_dir = tmp_path / "coach"
-    coach_dir.mkdir()
-    monkeypatch.setenv("COACH_CONFIG_DIR", str(coach_dir))
-    # Pretend an older plugin dir wrote the entry
-    old_root = tmp_path / "plugin-old"
+    """ours-wrapped pointing at a stale legacy versioned plugin path
+    → patcher rewrites to the stable trampoline shape under coach_dir
+    and refreshes .plugin-root to the current plugin_root."""
+    # Pretend an older plugin dir wrote a legacy versioned entry.
+    old_root = plugin_root.parent / "plugin-old"
     settings.write_text(json.dumps({
         "statusLine": {
             "type": "command",
-            "command": f"{old_root}/bin/bootstrap.sh {old_root}/bin/statusline_wrap.py",
+            "command": f"{old_root}/bin/run.sh {old_root}/bin/statusline_wrap.py",
         },
     }))
-    # Also need a wrap marker so the action recognizes ours-wrapped
+    # Wrap marker so the action recognizes ours-wrapped.
+    coach_dir.mkdir(parents=True, exist_ok=True)
     (coach_dir / ".statusline-wrap.json").write_text(json.dumps({
         "original_command": "bash /opt/x.sh",
     }))
@@ -176,8 +209,13 @@ def test_refreshes_stale_plugin_path_on_wrapped(
     result = sp.ensure_statusline_installed(str(plugin_root), settings_path=settings)
     assert result == "wrap-refreshed"
     new_cmd = json.loads(settings.read_text())["statusLine"]["command"]
-    assert str(plugin_root) in new_cmd
+    assert sp.TRAMPOLINE_NAME in new_cmd
     assert str(old_root) not in new_cmd
+    # plugin_root is no longer embedded in settings.json (it lives in
+    # the trampoline's .plugin-root cache instead).
+    assert str(plugin_root) not in new_cmd
+    cache = (coach_dir / sp.PLUGIN_ROOT_CACHE_NAME).read_text().strip()
+    assert cache == str(plugin_root.resolve())
 
 
 def test_skipped_when_settings_absent(tmp_path, plugin_root):
@@ -230,24 +268,69 @@ def test_recognizes_cli_installed_statusline(settings, plugin_root):
     assert result == "matched"
 
 
-def test_recognizes_plugin_installed_statusline(settings, plugin_root):
-    """Plugin-installed statusLine (uses default_statusline.py via
-    bootstrap.sh) must also be recognized as 'ours' on the second
-    SessionStart."""
+def test_recognizes_trampoline_statusline_as_ours(settings, plugin_root, coach_dir):
+    """v0.1.22+: trampoline-shape default command is the stable shape;
+    a second SessionStart with the SAME trampoline path is a matched
+    no-op (cache file gets refreshed in place but settings.json is
+    untouched)."""
+    trampoline_path = coach_dir / sp.TRAMPOLINE_NAME
     settings.write_text(json.dumps({
         "statusLine": {
             "type": "command",
-            "command": "/path/to/plugin/bin/bootstrap.sh /path/to/plugin/bin/default_statusline.py",
+            "command": f"bash {trampoline_path} default_statusline.py",
         },
     }))
     result = sp.ensure_statusline_installed(str(plugin_root), settings_path=settings)
     assert result == "matched"
 
 
+def test_migrates_legacy_versioned_plugin_default(settings, plugin_root, coach_dir):
+    """v0.1.22+: any legacy plugin-default shape (versioned run.sh path
+    or pre-v0.1.18 bootstrap.sh path) gets migrated to the stable
+    trampoline shape under coach_dir. This is the load-bearing fix for
+    the recurring 'Plugin directory does not exist: .../<old-version>'
+    error that fires when a long-running CC session holds a stale
+    CLAUDE_PLUGIN_ROOT after /plugin update."""
+    # Legacy versioned shape — what every coach-claw <=0.1.21 wrote.
+    old_root = plugin_root.parent / "plugin-OLD-version"
+    settings.write_text(json.dumps({
+        "statusLine": {
+            "type": "command",
+            "command": f"{old_root}/bin/run.sh {old_root}/bin/default_statusline.py",
+        },
+    }))
+    result = sp.ensure_statusline_installed(str(plugin_root), settings_path=settings)
+    assert result == "refreshed-path"
+    new_cmd = json.loads(settings.read_text())["statusLine"]["command"]
+    assert sp.TRAMPOLINE_NAME in new_cmd
+    assert "default_statusline.py" in new_cmd
+    # Old versioned path scrubbed.
+    assert str(old_root) not in new_cmd
+
+
+def test_migrates_legacy_bootstrap_to_trampoline(settings, plugin_root, coach_dir):
+    """Pre-v0.1.18 plugin entries pointed at bootstrap.sh; under v0.1.22+
+    these are migrated to the stable trampoline shape, same path as
+    fresh installs."""
+    settings.write_text(json.dumps({
+        "statusLine": {
+            "type": "command",
+            "command": f"{plugin_root}/bin/bootstrap.sh {plugin_root}/bin/default_statusline.py",
+        },
+    }))
+    result = sp.ensure_statusline_installed(str(plugin_root), settings_path=settings)
+    assert result == "refreshed-path"
+    new_cmd = json.loads(settings.read_text())["statusLine"]["command"]
+    assert sp.TRAMPOLINE_NAME in new_cmd
+    assert "bootstrap.sh" not in new_cmd
+    assert "default_statusline.py" in new_cmd
+
+
 def test_desired_entry_quotes_paths_with_spaces(tmp_path):
-    """Symmetric with `_build_wrapper_command` in statusline_wrap_action:
-    a plugin_root with spaces must produce a command that bash parses
-    as exactly two tokens (bootstrap.sh + default_statusline.py)."""
+    """Legacy fallback (coach_dir=None): a plugin_root with spaces must
+    produce a command that bash parses as exactly two tokens (run.sh +
+    default_statusline.py). Kept as a regression guard for callers that
+    haven't been migrated to the trampoline shape yet."""
     plugin_root = tmp_path / "Plugin Dir With Spaces"
     (plugin_root / "bin").mkdir(parents=True)
     entry = sp._desired_entry(plugin_root)
@@ -257,5 +340,79 @@ def test_desired_entry_quotes_paths_with_spaces(tmp_path):
         f"plugin_root paths split by bash; tokens={tokens!r} "
         f"command={entry['command']!r}"
     )
-    assert tokens[0] == str(plugin_root / "bin" / "bootstrap.sh")
+    assert tokens[0] == str(plugin_root / "bin" / "run.sh")
     assert tokens[1] == str(plugin_root / "bin" / "default_statusline.py")
+
+
+def test_desired_entry_trampoline_quotes_paths_with_spaces(tmp_path):
+    """Trampoline shape (coach_dir set): a coach_dir with spaces must
+    produce a command that bash parses as `bash <quoted-trampoline>
+    default_statusline.py` — three tokens."""
+    coach_dir = tmp_path / "Coach Dir With Spaces"
+    plugin_root = tmp_path / "plugin"
+    (plugin_root / "bin").mkdir(parents=True)
+    entry = sp._desired_entry(plugin_root, coach_dir=coach_dir)
+
+    tokens = shlex.split(entry["command"])
+    assert tokens == [
+        "bash",
+        str(coach_dir / sp.TRAMPOLINE_NAME),
+        "default_statusline.py",
+    ]
+
+
+def test_ensure_trampoline_installed_writes_files(tmp_path):
+    """ensure_trampoline_installed writes the shell script + .plugin-root
+    cache and the contents are exactly what the trampoline expects."""
+    coach_dir = tmp_path / "coach"
+    plugin_root = tmp_path / "plugin" / "0.1.22"
+    plugin_root.mkdir(parents=True)
+
+    result = sp.ensure_trampoline_installed(coach_dir, plugin_root)
+    assert result == coach_dir / sp.TRAMPOLINE_NAME
+
+    assert (coach_dir / sp.TRAMPOLINE_NAME).exists()
+    body = (coach_dir / sp.TRAMPOLINE_NAME).read_text()
+    # Must read the .plugin-root cache file the same module wrote.
+    assert sp.PLUGIN_ROOT_CACHE_NAME in body
+    # Must honor COACH_CONFIG_DIR so tests + npm CLI wrapper work.
+    assert "COACH_CONFIG_DIR" in body
+    # Must exec into the plugin's bin/run.sh + $TARGET, preserving stdin.
+    assert "exec" in body
+    assert "bin/run.sh" in body
+
+    cache = (coach_dir / sp.PLUGIN_ROOT_CACHE_NAME).read_text().strip()
+    assert cache == str(plugin_root.resolve())
+
+
+def test_ensure_trampoline_installed_refreshes_stale_cache(tmp_path):
+    """ensure_trampoline_installed rewrites .plugin-root when the
+    active plugin path moves (/plugin update bumps the version dir)."""
+    coach_dir = tmp_path / "coach"
+    coach_dir.mkdir()
+    # Pre-populate with a stale path.
+    (coach_dir / sp.PLUGIN_ROOT_CACHE_NAME).write_text(
+        "/old/stale/plugin/0.1.19\n"
+    )
+    plugin_root = tmp_path / "plugin" / "0.1.22"
+    plugin_root.mkdir(parents=True)
+
+    sp.ensure_trampoline_installed(coach_dir, plugin_root)
+    cache = (coach_dir / sp.PLUGIN_ROOT_CACHE_NAME).read_text().strip()
+    assert cache == str(plugin_root.resolve())
+
+
+def test_ensure_trampoline_installed_idempotent(tmp_path):
+    """Calling twice with the same args is a no-op on the second call
+    (content already matches)."""
+    coach_dir = tmp_path / "coach"
+    plugin_root = tmp_path / "plugin" / "0.1.22"
+    plugin_root.mkdir(parents=True)
+
+    sp.ensure_trampoline_installed(coach_dir, plugin_root)
+    mtime1 = (coach_dir / sp.TRAMPOLINE_NAME).stat().st_mtime_ns
+
+    # Second call — content equal → no rewrite.
+    sp.ensure_trampoline_installed(coach_dir, plugin_root)
+    mtime2 = (coach_dir / sp.TRAMPOLINE_NAME).stat().st_mtime_ns
+    assert mtime1 == mtime2

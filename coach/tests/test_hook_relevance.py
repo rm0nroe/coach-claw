@@ -904,6 +904,25 @@ def test_strength_tips_have_distinct_runtime_treatment(cup):
     assert spec == {"action": "test_run", "xp": 2, "description": "test run"}
 
 
+def test_weakness_completion_banner_no_coach_insights_leak(cup):
+    """v0.1.19+: terminal-shape weakness tip-cleared banner must NOT
+    expose the internal /coach-insights cron mechanic to the user.
+    System is automatic by design — the streak bar speaks for itself."""
+    block = cup._completion_banner([
+        ("entry:edits-without-testing", {
+            "kind": "weakness",
+            "entry_id": "edits-without-testing",
+            "clean_streak": 2,
+            "spec": {"action": "test_run", "xp": 2, "description": "test run"},
+        })
+    ])
+    # Bar still rendered
+    assert "🟢🟢⚪⚪⚪" in block
+    # Internal mechanic must NOT leak
+    assert "/coach-insights" not in block
+    assert "advances" not in block
+
+
 def test_strength_completion_banner_reinforces_instead_of_clearing(cup):
     block = cup._completion_banner([
         ("entry:tests-after-edits", {

@@ -24,7 +24,15 @@ contents directly.
 
 Versioning is driven by `plugin/.claude-plugin/plugin.json:version` in
 the source repo — bumping that field is what tells users a new release
-is available via `/plugin update`.
+is available. Pull the new version with a two-phase command:
+
+```
+/plugin marketplace update coach-claw-plugins      # refresh catalog
+/plugin update coach-claw@coach-claw-plugins       # install new version
+```
+
+`/plugin update` alone won't see the new release — the catalog must
+refresh first. Or open the `/plugin` TUI, which combines both.
 
 ## What this is not
 

@@ -446,6 +446,74 @@ def remove_statusline() -> Dict[str, Any]:
     }
 
 
+def uninstall_prep(*, wipe_data: bool = False) -> Dict[str, Any]:
+    """Pre-uninstall cleanup. Writes ~/.claude/coach/.uninstall-prepped
+    marker so the UserPromptSubmit intercept lets the next
+    /plugin uninstall through.
+
+    Default: clears Coach statusLine, preserves profile data.
+    With wipe_data=True: ALSO mv ~/.claude/coach/ → ~/.claude/coach.bak.<TS>/.
+    Per CLAUDE.md "Never `rm -rf` anything. Use `mv` to a `.bak` path."
+    """
+    from datetime import datetime as _dt
+    result: Dict[str, Any] = {
+        "action": "uninstall-prep",
+        "wipe_data": bool(wipe_data),
+    }
+
+    # Step 1: clear Coach statusLine (reuses remove_statusline for safety
+    # contract — non-Coach entries stay untouched).
+    rm = remove_statusline()
+    result["statusline"] = rm
+
+    coach_dir = resolve_coach_dir()
+    archive_path: Path | None = None
+
+    # Step 2 (optional): archive profile data.
+    if wipe_data and coach_dir.exists():
+        ts = _dt.utcnow().strftime("%Y%m%d-%H%M%S")
+        archive_path = coach_dir.parent / f"coach.bak.{ts}"
+        try:
+            os.rename(coach_dir, archive_path)
+        except OSError as e:
+            return {
+                **result,
+                "result": "error",
+                "detail": f"failed to archive coach dir: {e}",
+            }
+        # Recreate empty coach_dir so the marker we're about to write
+        # has a parent. (Plugin's next SessionStart hook will repopulate
+        # standard files on first run.)
+        coach_dir.mkdir(parents=True, exist_ok=True)
+        result["archived_to"] = str(archive_path)
+
+    # Step 3: write the .uninstall-prepped marker. Acts as the bypass
+    # gate for the UserPromptSubmit intercept on the next
+    # /plugin uninstall attempt.
+    marker = coach_dir / ".uninstall-prepped"
+    try:
+        coach_dir.mkdir(parents=True, exist_ok=True)
+        marker.write_text(
+            json.dumps({
+                "prepped_at": _dt.utcnow().isoformat() + "Z",
+                "wipe_data": bool(wipe_data),
+                "archived_to": str(archive_path) if archive_path else None,
+            })
+        )
+    except OSError as e:
+        return {
+            **result,
+            "result": "error",
+            "detail": f"failed to write marker: {e}",
+        }
+
+    result["result"] = "prepped"
+    result["next_step"] = (
+        "Run /plugin uninstall coach-claw@coach-claw-plugins to complete."
+    )
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Output: human-readable report and JSON.
 # ---------------------------------------------------------------------------
@@ -603,6 +671,33 @@ def main(argv: list[str] | None = None) -> int:
              "the current statusLine command was edited since wrap.",
     )
     parser.add_argument(
+        "--prune-cache",
+        action="store_true",
+        help="Remove plugin cache dirs older than the active version. "
+             "Combines with --dry-run to preview.",
+    )
+    parser.add_argument(
+        "--uninstall-prep",
+        action="store_true",
+        help="Pre-uninstall cleanup. Removes plugin statusLine from "
+             "settings.json + writes ~/.claude/coach/.uninstall-prepped "
+             "marker so the UserPromptSubmit intercept lets the next "
+             "/plugin uninstall through. Default preserves profile data; "
+             "add --wipe-data to also archive it.",
+    )
+    parser.add_argument(
+        "--wipe-data",
+        action="store_true",
+        help="With --uninstall-prep: also mv ~/.claude/coach/ to "
+             "~/.claude/coach.bak.<TS>/. Reversible (not rm).",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="With --prune-cache: show what would be removed without "
+             "deleting.",
+    )
+    parser.add_argument(
         "--json",
         action="store_true",
         help="Emit probe results as machine-readable JSON.",
@@ -613,6 +708,8 @@ def main(argv: list[str] | None = None) -> int:
         args.remove_statusline,
         args.wrap_statusline,
         args.unwrap_statusline,
+        args.prune_cache,
+        args.uninstall_prep,
     ])
     if actions > 1:
         sys.stderr.write(
@@ -629,6 +726,11 @@ def main(argv: list[str] | None = None) -> int:
         sys.stderr.write(
             "doctor.py: --force is only valid with --wrap-statusline or "
             "--unwrap-statusline\n"
+        )
+        return 2
+    if args.wipe_data and not args.uninstall_prep:
+        sys.stderr.write(
+            "doctor.py: --wipe-data is only valid with --uninstall-prep\n"
         )
         return 2
 
@@ -648,6 +750,26 @@ def main(argv: list[str] | None = None) -> int:
         result["action"] = "unwrap-statusline"
         print(json.dumps(result, indent=2))
         return 0 if result["result"] in ("unwrapped", "no-op", "refused") else 1
+
+    if args.prune_cache:
+        import cache_prune
+        removed = cache_prune.prune_inactive_cache_versions(
+            dry_run=args.dry_run, verbose=True
+        )
+        verb = "would-remove" if args.dry_run else "removed"
+        result = {
+            "action": "prune-cache",
+            "result": verb,
+            "count": len(removed),
+            "paths": [str(p) for p in removed],
+        }
+        print(json.dumps(result, indent=2))
+        return 0
+
+    if args.uninstall_prep:
+        result = uninstall_prep(wipe_data=args.wipe_data)
+        print(json.dumps(result, indent=2))
+        return 0 if result["result"] in ("prepped", "no-op") else 1
 
     probes = collect_probes()
 

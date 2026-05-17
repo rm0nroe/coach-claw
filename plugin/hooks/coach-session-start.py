@@ -505,6 +505,18 @@ def main() -> None:
         # CLAUDE_PLUGIN_ROOT). Cheap when matched (single read).
         _maybe_install_plugin_statusline()
 
+        # Plugin distribution: prune cache dirs older than the active
+        # version. Claude Code's /plugin update never garbage-collects
+        # prior versions, so they accumulate. Failsafe + gated on
+        # CLAUDE_PLUGIN_ROOT. Cheap (microsecond scan, no-op when
+        # cache has one dir).
+        if os.environ.get("CLAUDE_PLUGIN_ROOT"):
+            try:
+                import cache_prune
+                cache_prune.prune_inactive_cache_versions()
+            except Exception:
+                pass
+
         # Bank yesterday's session XP into lifetime XP (async, never blocks).
         _bank_completed_sessions()
 

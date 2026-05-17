@@ -1,9 +1,12 @@
-"""coach-user-prompt.py: cron-nudge banner gating.
+"""coach-user-prompt.py: cron-nudge banner gating + install-summary wrap.
 
-The plugin distribution emits a one-time `<coach-cron-nudge>` block
-when (a) we're running under the plugin (CLAUDE_PLUGIN_ROOT set), and
-(b) no Coach cron/launchd plist is registered. Guarded by the
-`.cron-nudged` marker so it fires exactly once.
+The plugin distribution emits a one-time `<coach-install-summary>`
+block when (a) we're running under the plugin (CLAUDE_PLUGIN_ROOT set),
+and (b) no Coach cron/launchd plist is registered. Guarded by the
+`.cron-nudged` marker so it fires exactly once. The block wraps a
+pre-rendered banner with explicit surface-verbatim instructions so the
+model surfaces it at the top of its response instead of burying it as
+ambient context (same fix pattern as `<coach-celebrate>` banners).
 """
 from __future__ import annotations
 
@@ -119,6 +122,47 @@ def test_nudge_renders_ide_shape(cup, coach_dir, monkeypatch):
     block_term = cup._cron_nudge_block(env="terminal")
     assert block_ide.startswith("---")
     assert block_term.startswith(">")
+
+
+def test_nudge_wrapped_in_install_summary_tag(cup, coach_dir, monkeypatch):
+    """The maybe_-emit path wraps the banner in a <coach-install-summary>
+    block with explicit "render verbatim at top" instructions — same
+    surface-forcing pattern as <coach-celebrate>. Without the wrap, the
+    model treats the banner as ambient context and buries it."""
+    monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", "/some/plugin/root")
+    monkeypatch.setattr(cup, "COACH_DIR", coach_dir)
+    import cron_check
+    monkeypatch.setattr(cron_check, "is_cron_registered", lambda: False)
+
+    block = cup._maybe_cron_nudge_block(env="terminal")
+    assert block is not None
+    # Open + close tags present
+    assert "<coach-install-summary>" in block
+    assert "</coach-install-summary>" in block
+    # Load-bearing surface-verbatim instructions
+    assert "VERBATIM" in block
+    assert "very TOP of" in block
+    assert "BEFORE any other content" in block
+    # Banner is embedded inside the wrap
+    assert "📅" in block
+    assert "Daily insights need OS scheduling" in block
+    assert "npx @rm0nroe/coach-claw launchd" in block
+
+
+def test_nudge_banner_includes_plugin_version_and_path(cup, coach_dir, monkeypatch):
+    """Banner copy beefed up to surface plugin version + install path,
+    so the user (and any future debugger) can see exactly which plugin
+    install the nudge fired from."""
+    fake_root = "/Users/x/.claude/plugins/cache/coach-claw-plugins/coach-claw/9.9.9"
+    monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", fake_root)
+    monkeypatch.setattr(cup, "COACH_DIR", coach_dir)
+    import cron_check
+    monkeypatch.setattr(cron_check, "is_cron_registered", lambda: False)
+
+    block = cup._maybe_cron_nudge_block(env="terminal")
+    assert block is not None
+    assert "v9.9.9" in block
+    assert fake_root in block
 
 
 def test_failsafe_swallows_module_import_error(cup, coach_dir, monkeypatch):

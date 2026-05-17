@@ -64,9 +64,12 @@ def test_wrap_on_claimed_writes_marker_and_mutates_settings(
     assert "default-statusline-wrap-command.sh" in new_cmd  # CLI shape
 
 
-def test_wrap_with_plugin_root_uses_plugin_shape(
+def test_wrap_with_plugin_root_uses_trampoline_shape(
     settings_path, coach_dir, plugin_root
 ):
+    """v0.1.22+: plugin shape routes through the stable trampoline under
+    coach_dir, NOT a versioned plugin_root path. Trampoline + .plugin-root
+    cache are written as a side-effect."""
     _set_statusline(settings_path, "bash /opt/my-line.sh")
     res = wa.wrap(
         coach_dir=coach_dir,
@@ -75,9 +78,14 @@ def test_wrap_with_plugin_root_uses_plugin_shape(
     )
     assert res["result"] == "wrapped"
     new_cmd = _read_statusline(settings_path)
-    assert "bootstrap.sh" in new_cmd
+    assert "plugin-statusline.sh" in new_cmd
     assert "statusline_wrap.py" in new_cmd
+    # plugin_root must NOT appear in settings.json — that's the bug we fixed.
+    assert str(plugin_root) not in new_cmd
     assert "default-statusline-wrap-command.sh" not in new_cmd
+    # .plugin-root cache populated.
+    cache = (coach_dir / ".plugin-root").read_text().strip()
+    assert cache == str(plugin_root.resolve())
 
 
 def test_wrap_writes_announce_marker(settings_path, coach_dir):
@@ -114,11 +122,13 @@ def test_wrap_idempotent_when_already_wrapped(
     assert _read_statusline(settings_path) == cmd_after_first
 
 
-def test_wrap_refreshes_stale_plugin_root_path(
+def test_wrap_refreshes_stale_plugin_root_in_cache(
     settings_path, coach_dir, tmp_path
 ):
-    """ours-wrapped with a stale plugin_root → command rewrites with the
-    fresh path."""
+    """v0.1.22+: ours-wrapped with a different plugin_root updates the
+    .plugin-root cache (so the trampoline resolves to the new dir on
+    next exec) but settings.json command stays stable (the trampoline
+    path under coach_dir doesn't change across plugin versions)."""
     old_root = tmp_path / "plugin-old"
     (old_root / "bin").mkdir(parents=True)
     new_root = tmp_path / "plugin-new"
@@ -126,13 +136,49 @@ def test_wrap_refreshes_stale_plugin_root_path(
 
     _set_statusline(settings_path, "bash /opt/x.sh")
     wa.wrap(coach_dir=coach_dir, settings_path=settings_path, plugin_root=old_root)
-    assert str(old_root) in _read_statusline(settings_path)
+    cmd_after_first = _read_statusline(settings_path)
+    assert (coach_dir / ".plugin-root").read_text().strip() == str(old_root.resolve())
 
     res = wa.wrap(coach_dir=coach_dir, settings_path=settings_path, plugin_root=new_root)
+    # No settings.json mutation needed — the trampoline command is stable
+    # across plugin updates; only the cache file moves.
+    assert res["result"] == "no-op"
+    assert res["reason"] == "already-wrapped"
+    assert _read_statusline(settings_path) == cmd_after_first
+    # Cache refreshed in place.
+    assert (coach_dir / ".plugin-root").read_text().strip() == str(new_root.resolve())
+
+
+def test_wrap_migrates_legacy_versioned_wrap_command(
+    settings_path, coach_dir, tmp_path, plugin_root
+):
+    """A pre-v0.1.22 wrap command (`<plugin>/bin/run.sh
+    <plugin>/bin/statusline_wrap.py`, versioned) must be migrated to
+    the stable trampoline shape on encounter — this is the load-bearing
+    fix for the recurring 'Plugin directory does not exist: .../<old>'
+    error that fires when a long-running CC session holds a stale
+    CLAUDE_PLUGIN_ROOT after /plugin update."""
+    old_root = tmp_path / "plugin-OLD-version"
+    (old_root / "bin").mkdir(parents=True)
+    _set_statusline(
+        settings_path,
+        f"{old_root}/bin/run.sh {old_root}/bin/statusline_wrap.py",
+    )
+    # Pre-existing wrap marker — required for the action to recognize
+    # the entry as ours-wrapped.
+    (coach_dir / wa.WRAP_MARKER_NAME).write_text(json.dumps({
+        "original_command": "bash /opt/x.sh",
+    }))
+
+    res = wa.wrap(
+        coach_dir=coach_dir, settings_path=settings_path, plugin_root=plugin_root
+    )
     assert res["result"] == "wrapped"
     assert res["reason"] == "refreshed-path"
-    assert str(new_root) in _read_statusline(settings_path)
-    assert str(old_root) not in _read_statusline(settings_path)
+    new_cmd = _read_statusline(settings_path)
+    assert "plugin-statusline.sh" in new_cmd
+    assert "statusline_wrap.py" in new_cmd
+    assert str(old_root) not in new_cmd
 
 
 def test_wrap_respects_optout_marker(settings_path, coach_dir):
@@ -346,9 +392,12 @@ def test_wrap_if_claimed_cli_uses_env_settings_path(
     assert "default-statusline-wrap-command.sh" in _read_statusline(settings_path)
 
 
-def test_wrap_if_claimed_cli_with_plugin_root_uses_plugin_shape(
+def test_wrap_if_claimed_cli_with_plugin_root_uses_trampoline_shape(
     settings_path, coach_dir, plugin_root, monkeypatch
 ):
+    """v0.1.22+: CLAUDE_PLUGIN_ROOT in env → wrap routes through the
+    stable trampoline path under coach_dir, NOT a versioned plugin
+    path."""
     _set_statusline(settings_path, "bash /opt/x.sh")
     monkeypatch.setenv("COACH_CONFIG_DIR", str(coach_dir))
     monkeypatch.setenv("CLAUDE_SETTINGS_PATH", str(settings_path))
@@ -357,8 +406,9 @@ def test_wrap_if_claimed_cli_with_plugin_root_uses_plugin_shape(
     rc = wa.main(["wrap-if-claimed"])
     assert rc == 0
     cmd = _read_statusline(settings_path)
-    assert "bootstrap.sh" in cmd
+    assert "plugin-statusline.sh" in cmd
     assert "statusline_wrap.py" in cmd
+    assert str(plugin_root) not in cmd
 
 
 def test_wrap_if_claimed_cli_exits_zero_on_no_settings(
@@ -395,14 +445,19 @@ def test_build_wrapper_command_quotes_cli_paths_with_spaces(tmp_path):
 
 
 def test_build_wrapper_command_quotes_plugin_paths_with_spaces(tmp_path):
-    """Plugin shape: same protection for plugin_root."""
+    """Plugin shape (v0.1.22+): trampoline lives under coach_dir, so
+    space-protection applies to the coach_dir path. plugin_root no
+    longer appears in the command at all (it lives in .plugin-root
+    cache instead)."""
+    coach_dir = tmp_path / "Coach Dir With Spaces"
     plugin_root = tmp_path / "Plugin Dir With Spaces"
     (plugin_root / "bin").mkdir(parents=True)
-    cmd = wa._build_wrapper_command(coach_dir=tmp_path, plugin_root=plugin_root)
+    cmd = wa._build_wrapper_command(coach_dir=coach_dir, plugin_root=plugin_root)
 
     tokens = shlex.split(cmd)
-    assert len(tokens) == 2, (
-        f"plugin_root paths split by bash; tokens={tokens!r} cmd={cmd!r}"
-    )
-    assert tokens[0] == str(plugin_root / "bin" / "bootstrap.sh")
-    assert tokens[1] == str(plugin_root / "bin" / "statusline_wrap.py")
+    assert tokens == [
+        "bash",
+        str(coach_dir / "plugin-statusline.sh"),
+        "statusline_wrap.py",
+    ]
+    assert str(plugin_root) not in cmd

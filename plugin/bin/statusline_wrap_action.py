@@ -58,6 +58,7 @@ from coach_paths import resolve_coach_dir  # noqa: E402
 from statusline_self_patch import (  # noqa: E402
     COACH_STATUSLINE_MARKERS,
     _atomic_write,
+    ensure_trampoline_installed,
 )
 
 # ---------------------------------------------------------------------------
@@ -223,15 +224,18 @@ def _build_wrapper_command(
 ) -> str:
     """Return the settings.json `command` string for the wrap shape.
 
-    Plugin path-shape uses bootstrap.sh + statusline_wrap.py (mirrors
-    `_desired_entry` in statusline_self_patch.py). CLI uses a shell
+    Plugin path-shape routes through the stable trampoline under
+    `coach_dir/plugin-statusline.sh` (written by
+    `statusline_self_patch.ensure_trampoline_installed`). The trampoline
+    resolves the active plugin install path at exec time from a small
+    cache file, so settings.json never embeds a versioned plugin path
+    that goes stale across `/plugin update` cycles. CLI uses a shell
     trampoline at `<coach_dir>/default-statusline-wrap-command.sh` so
-    the path stays stable across coach upgrades.
+    the path stays stable across coach upgrades there too.
     """
     if plugin_root is not None:
-        bootstrap = shlex.quote(str(plugin_root / "bin" / "bootstrap.sh"))
-        wrap_py = shlex.quote(str(plugin_root / "bin" / "statusline_wrap.py"))
-        return f"{bootstrap} {wrap_py}"
+        trampoline = shlex.quote(str(coach_dir / "plugin-statusline.sh"))
+        return f"bash {trampoline} statusline_wrap.py"
     trampoline = shlex.quote(str(coach_dir / "default-statusline-wrap-command.sh"))
     return f"bash {trampoline}"
 
@@ -269,6 +273,15 @@ def wrap(
     cdir = _resolve_dir(coach_dir)
     spath = _resolve_settings(settings_path)
     cdir.mkdir(parents=True, exist_ok=True)
+
+    # Plugin context: refresh the trampoline + .plugin-root cache so the
+    # stable path produced by _build_wrapper_command always resolves to
+    # the active plugin install. No-op for CLI calls (plugin_root is None).
+    if plugin_root is not None:
+        try:
+            ensure_trampoline_installed(cdir, plugin_root)
+        except Exception:
+            pass
 
     try:
         settings = _read_json(spath)
