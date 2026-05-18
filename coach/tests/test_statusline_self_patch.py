@@ -9,6 +9,7 @@ tmpdir settings.json.
 from __future__ import annotations
 
 import json
+import os
 import shlex
 from pathlib import Path
 
@@ -416,3 +417,162 @@ def test_ensure_trampoline_installed_idempotent(tmp_path):
     sp.ensure_trampoline_installed(coach_dir, plugin_root)
     mtime2 = (coach_dir / sp.TRAMPOLINE_NAME).stat().st_mtime_ns
     assert mtime1 == mtime2
+
+
+# ---------------------------------------------------------------------------
+# v0.1.23 — Trampoline whitespace fix (Finding 1.5).
+# ---------------------------------------------------------------------------
+
+
+def test_trampoline_resolves_plugin_root_with_spaces_in_path(tmp_path, monkeypatch):
+    """The trampoline reads `.plugin-root` and must preserve embedded
+    spaces in the install path. Pre-fix this used `cat | tr -d '[:space:]'`
+    which collapsed "/Users/some user/..." to "/Users/someuser/..." —
+    ENOENT on every render.
+
+    Force the cache-file path (NOT the installed_plugins.json fallback)
+    by pointing HOME at an empty tmpdir so no plugins JSON exists. The
+    trampoline's fallback python heredoc then returns nothing, and the
+    test exercises the cache-file read path exclusively.
+    """
+    import shutil
+    import subprocess
+
+    bash_path = shutil.which("bash")
+    if bash_path is None:
+        pytest.skip("bash not available")
+
+    # Plugin root with a space — stub run.sh + default_statusline.py.
+    plugin_root = tmp_path / "Plugin Dir With Spaces"
+    (plugin_root / "bin").mkdir(parents=True)
+    (plugin_root / "bin" / "run.sh").write_text(
+        '#!/bin/bash\nexec "$@"\n'
+    )
+    (plugin_root / "bin" / "default_statusline.py").write_text(
+        '#!/usr/bin/env python3\nprint("ok")\n'
+    )
+    (plugin_root / "bin" / "run.sh").chmod(0o755)
+    (plugin_root / "bin" / "default_statusline.py").chmod(0o755)
+
+    # Coach dir under tmp_path — write trampoline + cache file.
+    coach_dir = tmp_path / "coach"
+    sp.ensure_trampoline_installed(coach_dir, plugin_root)
+
+    # Sanity: cache file contains exact path with spaces preserved.
+    cached = (coach_dir / sp.PLUGIN_ROOT_CACHE_NAME).read_text().rstrip("\n")
+    assert cached == str(plugin_root.resolve()), (
+        f"cache file lost path content: {cached!r} != {str(plugin_root.resolve())!r}"
+    )
+
+    # Force the cache-file branch by pointing HOME at a fresh tmpdir
+    # with no installed_plugins.json. Pass COACH_CONFIG_DIR via env so
+    # the trampoline finds the cache file we just wrote.
+    fake_home = tmp_path / "fake-home"
+    fake_home.mkdir()
+    env = {
+        "PATH": os.environ.get("PATH", ""),
+        "HOME": str(fake_home),
+        "COACH_CONFIG_DIR": str(coach_dir),
+    }
+
+    proc = subprocess.run(
+        [bash_path, str(coach_dir / sp.TRAMPOLINE_NAME), "default_statusline.py"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        env=env,
+    )
+    assert proc.returncode == 0, (
+        f"trampoline failed under bash — likely whitespace-collapse bug.\n"
+        f"stdout={proc.stdout!r}\nstderr={proc.stderr!r}"
+    )
+    assert "No such file or directory" not in proc.stderr, proc.stderr
+    assert "ok" in proc.stdout
+
+
+# ---------------------------------------------------------------------------
+# v0.1.23 — Centralized marker invalidation (Finding 1b).
+# Any write OR observation of a Coach-owned statusLine clears
+# `.uninstall-prepped`. Pinned per return path of ensure_statusline_installed.
+# ---------------------------------------------------------------------------
+
+
+def _seed_uninstall_marker(coach_dir):
+    coach_dir.mkdir(parents=True, exist_ok=True)
+    (coach_dir / sp.UNINSTALL_PREP_MARKER_NAME).write_text(
+        '{"prepped_at": "2026-05-17T18:00:00Z", "wipe_data": false}'
+    )
+
+
+def test_installed_path_clears_uninstall_prep_marker(
+    settings, plugin_root, coach_dir
+):
+    """`installed` return path: empty settings.json + marker present →
+    marker gone after write."""
+    settings.write_text(json.dumps({}))
+    _seed_uninstall_marker(coach_dir)
+    result = sp.ensure_statusline_installed(str(plugin_root), settings_path=settings)
+    assert result == "installed"
+    assert not (coach_dir / sp.UNINSTALL_PREP_MARKER_NAME).exists()
+
+
+def test_refreshed_path_clears_uninstall_prep_marker(
+    settings, plugin_root, coach_dir
+):
+    """`refreshed-path` return path: legacy versioned plugin shape +
+    marker → marker gone after migration."""
+    old_root = plugin_root.parent / "plugin-OLD"
+    settings.write_text(json.dumps({
+        "statusLine": {
+            "type": "command",
+            "command": f"{old_root}/bin/run.sh {old_root}/bin/default_statusline.py",
+        },
+    }))
+    _seed_uninstall_marker(coach_dir)
+    result = sp.ensure_statusline_installed(str(plugin_root), settings_path=settings)
+    assert result == "refreshed-path"
+    assert not (coach_dir / sp.UNINSTALL_PREP_MARKER_NAME).exists()
+
+
+def test_matched_path_clears_uninstall_prep_marker(
+    settings, plugin_root, coach_dir
+):
+    """`matched` return path: a current trampoline-shape Coach entry +
+    marker → marker gone on OBSERVATION ALONE. This is the load-bearing
+    case: a stale marker plus a Coach statusLine is already the broken
+    state the v0.1.20 intercept was meant to prevent."""
+    coach_dir.mkdir(parents=True, exist_ok=True)
+    trampoline_path = coach_dir / sp.TRAMPOLINE_NAME
+    settings.write_text(json.dumps({
+        "statusLine": {
+            "type": "command",
+            "command": f"bash {trampoline_path} default_statusline.py",
+        },
+    }))
+    _seed_uninstall_marker(coach_dir)
+    result = sp.ensure_statusline_installed(str(plugin_root), settings_path=settings)
+    assert result == "matched"
+    assert not (coach_dir / sp.UNINSTALL_PREP_MARKER_NAME).exists()
+
+
+def test_wrap_matched_clears_uninstall_prep_marker(
+    settings, plugin_root, coach_dir
+):
+    """`matched` return via the wrap-shape branch: a current Coach wrap
+    statusLine + marker → marker gone on observation (delegated through
+    statusline_wrap_action.wrap which also clears the marker)."""
+    coach_dir.mkdir(parents=True, exist_ok=True)
+    (coach_dir / ".statusline-wrap.json").write_text(json.dumps({
+        "original_command": "bash /opt/x.sh",
+    }))
+    trampoline_path = coach_dir / sp.TRAMPOLINE_NAME
+    settings.write_text(json.dumps({
+        "statusLine": {
+            "type": "command",
+            "command": f"bash {trampoline_path} statusline_wrap.py",
+        },
+    }))
+    _seed_uninstall_marker(coach_dir)
+    result = sp.ensure_statusline_installed(str(plugin_root), settings_path=settings)
+    assert result == "matched"
+    assert not (coach_dir / sp.UNINSTALL_PREP_MARKER_NAME).exists()

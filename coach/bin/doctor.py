@@ -439,8 +439,12 @@ def remove_statusline() -> Dict[str, Any]:
         "action": "remove-statusline",
         "result": "removed",
         "detail": (
-            "cleared the Coach statusLine entry. "
-            "Run /plugin uninstall coach-claw to finish."
+            "cleared the Coach statusLine entry. Note: this does NOT "
+            "write the .uninstall-prepped bypass marker — running "
+            "/plugin uninstall coach-claw@coach-claw-plugins will "
+            "still hit the v0.1.20+ intercept. For a clean canonical "
+            "uninstall, run /coach-claw:doctor --uninstall-prep "
+            "instead (clears statusLine AND writes the marker)."
         ),
         "previous_command": classified["command"],
     }
@@ -465,6 +469,26 @@ def uninstall_prep(*, wipe_data: bool = False) -> Dict[str, Any]:
     # contract — non-Coach entries stay untouched).
     rm = remove_statusline()
     result["statusline"] = rm
+
+    # Abort BEFORE writing the .uninstall-prepped marker when statusLine
+    # cleanup actually failed. Writing the marker on a failed cleanup
+    # would let the next /plugin uninstall bypass the v0.1.20 intercept
+    # while the Coach statusLine is still in settings.json — exactly
+    # the orphan state the intercept was meant to prevent. Acceptable
+    # rm["result"] values that proceed:
+    #   - "removed":  cleared a Coach statusLine
+    #   - "no-op":    no settings.json or no statusLine key
+    #   - "skipped":  statusLine is non-Coach (claimed / integrated-
+    #                 externally) so uninstall won't leave a Coach orphan
+    if rm.get("result") == "error":
+        return {
+            **result,
+            "result": "error",
+            "detail": (
+                "statusLine cleanup failed; refusing to write bypass "
+                f"marker: {rm.get('detail', 'unknown error')}"
+            ),
+        }
 
     coach_dir = resolve_coach_dir()
     archive_path: Path | None = None

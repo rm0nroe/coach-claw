@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import sys
 import time
@@ -57,31 +58,66 @@ def _parse_semver(s: str) -> tuple[int, ...] | None:
         return None
 
 
-def find_active_version(installed_plugins_path: Path = INSTALLED_PLUGINS_JSON) -> str | None:
-    """Read installed_plugins.json and return the active coach-claw version.
+def find_installed_versions(
+    installed_plugins_path: Path = INSTALLED_PLUGINS_JSON,
+) -> set[tuple[int, ...]]:
+    """Read installed_plugins.json and return EVERY installed coach-claw
+    version as a parsed semver tuple.
 
-    Returns None if the file is missing, malformed, or has no
-    coach-claw@coach-claw-plugins entry. Multiple entries (project +
-    user scope) → return the highest version (user scope wins by
-    semver, not by scope priority — we always prune to highest known).
+    Multi-scope installs (project + user) each contribute one entry to
+    the returned set. Cache-prune must preserve all of them — a
+    project-scoped install pinned far below a user-scoped install is
+    still a live install whose cache dir is referenced by
+    installed_plugins.json.
+
+    Returns the empty set if the file is missing, malformed, or has no
+    coach-claw@coach-claw-plugins entry. Failsafe — never raises.
     """
     try:
         data = json.loads(installed_plugins_path.read_text())
         entries = data.get("plugins", {}).get(
             f"{PLUGIN_NAME}@{MARKETPLACE}", []
         )
-        if not entries:
-            return None
-        versions = []
-        for e in entries:
-            v = e.get("version")
-            parsed = _parse_semver(v) if v else None
-            if parsed:
-                versions.append((parsed, v))
-        if not versions:
-            return None
-        return max(versions, key=lambda pair: pair[0])[1]
     except (OSError, json.JSONDecodeError, KeyError, TypeError):
+        return set()
+    versions: set[tuple[int, ...]] = set()
+    for e in entries:
+        v = e.get("version") if isinstance(e, dict) else None
+        parsed = _parse_semver(v) if v else None
+        if parsed:
+            versions.add(parsed)
+    return versions
+
+
+def find_active_version(installed_plugins_path: Path = INSTALLED_PLUGINS_JSON) -> str | None:
+    """Backward-compatible wrapper: returns the highest installed
+    version as a dotted-string, or None if none found.
+
+    New code should use `find_installed_versions` and act on the full
+    set. This wrapper exists for callers that haven't been migrated.
+    """
+    versions = find_installed_versions(installed_plugins_path)
+    if not versions:
+        return None
+    return ".".join(str(p) for p in max(versions))
+
+
+def _claude_plugin_root_version() -> tuple[int, ...] | None:
+    """If `$CLAUDE_PLUGIN_ROOT` is set and its basename parses as
+    semver, return the tuple. Otherwise None.
+
+    Defensive: even if `installed_plugins.json` doesn't list the
+    version a running session is bound to (file drift, partial
+    install state, manual edit), the env var is what Claude Code
+    actually resolved for this process. Protect that version from
+    prune unconditionally.
+    """
+    root = os.environ.get("CLAUDE_PLUGIN_ROOT")
+    if not root:
+        return None
+    try:
+        return _parse_semver(Path(root).name)
+    except Exception:
         return None
 
 
@@ -105,24 +141,18 @@ def prune_inactive_cache_versions(
     try:
         if not cache_root.exists():
             return []
-        active = find_active_version(installed_plugins_path)
-        if active is None:
+        installed_versions = find_installed_versions(installed_plugins_path)
+        live_version = _claude_plugin_root_version()
+        if live_version:
+            installed_versions = installed_versions | {live_version}
+        if not installed_versions:
             if verbose:
-                print("cache_prune: no active version found, skipping", file=sys.stderr)
-            return []
-        active_tuple = _parse_semver(active)
-        if active_tuple is None:
-            return []
+                print("cache_prune: no installed versions found, skipping", file=sys.stderr)
+            return []  # no anchor — never prune blind
+
+        max_installed = max(installed_versions)
         cutoff = (now if now is not None else time.time()) - RECENT_MTIME_THRESHOLD_SECONDS
 
-        # Keep the PREDECESSOR_RETENTION_COUNT newest predecessors below
-        # the active version as a rollback buffer. Long-running CC
-        # processes load plugin hook paths in memory at session start;
-        # if auto-prune deletes a dir those processes still reference,
-        # /clear and SessionStart events fire with ENOENT. A wider
-        # buffer absorbs multi-bump release trains (e.g. 0.1.17→0.1.21
-        # in one commit) where the original version drops out of an
-        # N-1 window across several prune cycles.
         all_semver_dirs = sorted(
             (
                 (_parse_semver(c.name), c)
@@ -132,12 +162,22 @@ def prune_inactive_cache_versions(
             key=lambda pair: pair[0],
             reverse=True,
         )
+
+        # PREDECESSOR_RETENTION_COUNT newest cache versions strictly below
+        # EACH installed version. Union'd into one keep-set. Long-running
+        # CC processes hold the plugin path they resolved at session
+        # start; per-installed-version buffer ensures rollback margin for
+        # every scope a session might be bound to, not just the highest
+        # version. Multi-bump release trains (e.g. 0.1.17→0.1.21 in one
+        # commit) get the same protection that v0.1.22's N-3 introduced
+        # for single-scope installs.
+        cache_only = [t for t, _ in all_semver_dirs if t not in installed_versions]
         predecessor_keep: set[tuple[int, ...]] = set()
-        for t, _ in all_semver_dirs:
-            if t < active_tuple:
-                predecessor_keep.add(t)
-                if len(predecessor_keep) >= PREDECESSOR_RETENTION_COUNT:
-                    break
+        for inst in installed_versions:
+            below = [t for t in cache_only if t < inst][:PREDECESSOR_RETENTION_COUNT]
+            predecessor_keep.update(below)
+
+        keep_versions = installed_versions | predecessor_keep
 
         removed: list[Path] = []
         for child in cache_root.iterdir():
@@ -149,13 +189,16 @@ def prune_inactive_cache_versions(
                 if verbose:
                     print(f"cache_prune: skip non-semver {child.name}", file=sys.stderr)
                 continue
-            if child_tuple >= active_tuple:
-                # active version OR newer (shouldn't happen, but defensive)
+            if child_tuple in installed_versions:
                 if verbose:
-                    print(f"cache_prune: keep {child.name} (>= active {active})", file=sys.stderr)
+                    print(f"cache_prune: keep {child.name} (installed)", file=sys.stderr)
+                continue
+            if child_tuple > max_installed:
+                # newer than anything installed (shouldn't happen, defensive)
+                if verbose:
+                    print(f"cache_prune: keep {child.name} (> max installed {max_installed})", file=sys.stderr)
                 continue
             if child_tuple in predecessor_keep:
-                # predecessor inside retention window — keep as rollback buffer
                 if verbose:
                     print(f"cache_prune: keep {child.name} (predecessor rollback buffer)", file=sys.stderr)
                 continue

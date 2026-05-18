@@ -461,3 +461,104 @@ def test_build_wrapper_command_quotes_plugin_paths_with_spaces(tmp_path):
         "statusline_wrap.py",
     ]
     assert str(plugin_root) not in cmd
+
+
+# ---------------------------------------------------------------------------
+# v0.1.23 — Centralized marker invalidation (Finding 1b).
+# Any write OR observation of a Coach-owned wrap statusLine clears
+# `.uninstall-prepped`. Mirrors statusline_self_patch coverage.
+# ---------------------------------------------------------------------------
+
+
+_UNINSTALL_MARKER_NAME = ".uninstall-prepped"
+
+
+def _seed_marker(coach_dir):
+    (coach_dir / _UNINSTALL_MARKER_NAME).write_text(
+        '{"prepped_at": "2026-05-17T18:00:00Z", "wipe_data": false}'
+    )
+
+
+def test_wrap_new_clears_uninstall_prep_marker(
+    settings_path, coach_dir, plugin_root
+):
+    """Claimed statusLine + marker → new-wrap branch writes the Coach
+    wrapper AND clears the marker. The marker would otherwise
+    silent-bypass the next /plugin uninstall while the Coach wrap is
+    live."""
+    _set_statusline(settings_path, "bash /opt/x.sh")
+    _seed_marker(coach_dir)
+    res = wa.wrap(
+        coach_dir=coach_dir, settings_path=settings_path, plugin_root=plugin_root
+    )
+    assert res["result"] == "wrapped"
+    assert not (coach_dir / _UNINSTALL_MARKER_NAME).exists()
+
+
+def test_wrap_refresh_clears_uninstall_prep_marker(
+    settings_path, coach_dir, plugin_root, tmp_path
+):
+    """Stale-versioned wrap command + marker → refresh path writes the
+    trampoline shape AND clears the marker."""
+    old_root = tmp_path / "plugin-old"
+    (old_root / "bin").mkdir(parents=True)
+    _set_statusline(
+        settings_path,
+        f"{old_root}/bin/run.sh {old_root}/bin/statusline_wrap.py",
+    )
+    (coach_dir / wa.WRAP_MARKER_NAME).write_text(json.dumps({
+        "original_command": "bash /opt/x.sh",
+    }))
+    _seed_marker(coach_dir)
+    res = wa.wrap(
+        coach_dir=coach_dir, settings_path=settings_path, plugin_root=plugin_root
+    )
+    assert res["result"] == "wrapped"
+    assert res["reason"] == "refreshed-path"
+    assert not (coach_dir / _UNINSTALL_MARKER_NAME).exists()
+
+
+def test_wrap_already_wrapped_clears_uninstall_prep_marker(
+    settings_path, coach_dir, plugin_root
+):
+    """Current trampoline wrap + marker → no-op branch STILL clears the
+    marker on observation alone. Observation of a Coach-owned statusLine
+    invalidates the prep marker per the centralized invariant; otherwise
+    a stale marker survives indefinitely whenever no rewrite is needed."""
+    trampoline_path = coach_dir / "plugin-statusline.sh"
+    _set_statusline(
+        settings_path,
+        f"bash {trampoline_path} statusline_wrap.py",
+    )
+    (coach_dir / wa.WRAP_MARKER_NAME).write_text(json.dumps({
+        "original_command": "bash /opt/x.sh",
+    }))
+    _seed_marker(coach_dir)
+    res = wa.wrap(
+        coach_dir=coach_dir, settings_path=settings_path, plugin_root=plugin_root
+    )
+    assert res["result"] == "no-op"
+    assert res["reason"] == "already-wrapped"
+    assert not (coach_dir / _UNINSTALL_MARKER_NAME).exists()
+
+
+def test_unwrap_preserves_uninstall_prep_marker(
+    settings_path, coach_dir, plugin_root
+):
+    """Unwrap restores the user's original (non-Coach) command. The
+    marker's "Coach is cleared" intent remains valid after unwrap, so
+    the marker MUST be preserved — it should only be invalidated when a
+    Coach-owned statusLine is written or observed."""
+    # First wrap to create state.
+    _set_statusline(settings_path, "bash /opt/x.sh")
+    wa.wrap(
+        coach_dir=coach_dir, settings_path=settings_path, plugin_root=plugin_root
+    )
+    # Seed marker after the wrap (simulating user running --uninstall-prep
+    # later, then changing approach to unwrap manually).
+    _seed_marker(coach_dir)
+
+    res = wa.unwrap(coach_dir=coach_dir, settings_path=settings_path)
+    assert res["result"] == "unwrapped"
+    # Marker survives — statusLine is now non-Coach so the bypass remains valid.
+    assert (coach_dir / _UNINSTALL_MARKER_NAME).exists()

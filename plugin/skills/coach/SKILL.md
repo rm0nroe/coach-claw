@@ -54,24 +54,32 @@ system PyYAML.)
 
 ### `uninstall`
 
-Plugin uninstall is handled by Claude Code's `/plugin uninstall` command,
-not by this skill — it manages the plugin's installed footprint cleanly.
+Plugin uninstall is a two-step flow: prep (this plugin's skill) then
+the canonical Claude Code command. The prep step clears the
+`statusLine` entry Claude Code's `/plugin uninstall` does NOT touch
+and writes a `.uninstall-prepped` bypass marker so the canonical
+uninstall proceeds without warning.
 
 Tell the user:
 
-> "To uninstall the Coach Claw plugin, run `/plugin uninstall coach-claw`.
-> That removes the plugin's hooks, skills, and code from
-> `~/.claude/plugins/cache/`. Your coaching state in `~/.claude/coach/`
-> (profile.yaml, banked XP, git history) is preserved — uninstalling the
-> plugin doesn't touch your home directory state."
+> "To uninstall the Coach Claw plugin cleanly, run two commands:
 >
-> "The plugin may have patched `~/.claude/settings.json:statusLine`
-> during install. To clean that up, run
-> `/coach-claw:doctor --remove-statusline` BEFORE you uninstall, or
-> manually remove the `statusLine` key from `~/.claude/settings.json`
-> after."
+> 1. `/coach-claw:doctor --uninstall-prep` — clears the plugin's
+>    `statusLine` entry from `~/.claude/settings.json` and writes the
+>    `~/.claude/coach/.uninstall-prepped` marker. Your XP, profile,
+>    banked sessions, and `.user_config.json` are preserved by
+>    default.
+> 2. `/plugin uninstall coach-claw@coach-claw-plugins` — removes the
+>    plugin's hooks, skills, and code from
+>    `~/.claude/plugins/cache/`. The bypass marker authorizes the
+>    intercept to let this through without warning.
 >
-> "If you also installed the npm CLI version
+> Use `/coach-claw:doctor --uninstall-prep --wipe-data` for step 1 if
+> you also want to archive `~/.claude/coach/` (XP, profile, banked
+> sessions) to `~/.claude/coach.bak.<TS>/`. The archive is moved, not
+> deleted — restore by moving the dir back.
+>
+> If you also installed the npm CLI version
 > (`@rm0nroe/coach-claw`), uninstalling the plugin doesn't affect it.
 > Run `npx @rm0nroe/coach-claw uninstall` separately if you want to
 > remove that too."

@@ -58,6 +58,7 @@ from coach_paths import resolve_coach_dir  # noqa: E402
 from statusline_self_patch import (  # noqa: E402
     COACH_STATUSLINE_MARKERS,
     _atomic_write,
+    _drop_uninstall_prep_marker,
     ensure_trampoline_installed,
 )
 
@@ -293,6 +294,12 @@ def wrap(
         if kind == "absent":
             return {"result": "skipped", "reason": "absent"}
         if kind in ("ours-default", "ours-wrapped"):
+            # Observation of a Coach-owned statusLine invalidates the
+            # uninstall-prep marker — a stale marker plus a live Coach
+            # statusLine is the broken state the v0.1.20 intercept was
+            # meant to prevent. Applied to every branch below (refresh,
+            # no-op already-wrapped, no-op already-coach).
+            _drop_uninstall_prep_marker(cdir)
             # Special case: ours-wrapped with stale wrapper path → refresh.
             if kind == "ours-wrapped":
                 desired = _build_wrapper_command(
@@ -341,6 +348,13 @@ def wrap(
         )
         settings["statusLine"] = {"type": "command", "command": wrapper_cmd}
         _atomic_write(spath, settings)
+
+        # Writing a Coach wrapper invalidates the uninstall-prep marker
+        # (centralized invariant — see statusline_self_patch.
+        # _drop_uninstall_prep_marker). The marker would otherwise
+        # silent-bypass the next /plugin uninstall while the Coach
+        # statusLine is live.
+        _drop_uninstall_prep_marker(cdir)
 
         # Clear opt-out (re-opt-in semantics) and set the announce marker.
         if disabled_path.exists():

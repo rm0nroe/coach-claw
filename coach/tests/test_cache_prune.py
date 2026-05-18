@@ -261,8 +261,12 @@ def test_failsafe_returns_empty_when_no_entry(cache_root, tmp_path):
     assert removed == []
 
 
-def test_multiple_scope_entries_use_highest_version(cache_root, tmp_path):
-    """When project + user scope both present, prune to the higher version."""
+def test_multiple_scope_entries_preserve_every_installed_version(cache_root, tmp_path):
+    """v0.1.23+: when project + user scope both present, prune must
+    protect EVERY installed version, not just the highest. Pre-v0.1.23
+    behavior collapsed multi-scope to max(versions) and pruned the
+    lower-scope cache dir even though installed_plugins.json still
+    referenced it (teammate-reported P1)."""
     p = tmp_path / "installed_plugins.json"
     data = {
         "version": 2,
@@ -275,20 +279,26 @@ def test_multiple_scope_entries_use_highest_version(cache_root, tmp_path):
     }
     p.write_text(json.dumps(data))
     _mkversion(cache_root, "0.1.5")
-    _mkversion(cache_root, "0.1.6")   # N-3 — kept under v0.1.22 rules
-    _mkversion(cache_root, "0.1.13")  # N-2 — kept
-    _mkversion(cache_root, "0.1.14")  # N-1 — kept
-    active_dir = _mkversion(cache_root, "0.1.15")
+    _mkversion(cache_root, "0.1.6")            # project-scoped install
+    _mkversion(cache_root, "0.1.13")
+    _mkversion(cache_root, "0.1.14")
+    active_dir = _mkversion(cache_root, "0.1.15")  # user-scoped install
 
     removed = cache_prune.prune_inactive_cache_versions(
         cache_root=cache_root, installed_plugins_path=p
     )
 
+    # Both installed scope versions retained — the load-bearing fix.
     assert active_dir.exists()
+    assert (cache_root / "0.1.6").exists(), "lower-scope install must survive"
+    # N-3 buffer below user-scoped 0.1.15.
     assert (cache_root / "0.1.14").exists()
     assert (cache_root / "0.1.13").exists()
-    assert (cache_root / "0.1.6").exists()
-    assert [p.name for p in removed] == ["0.1.5"]
+    assert (cache_root / "0.1.5").exists()  # N-1 below 0.1.6
+    # All cache dirs fit either an installed slot or a per-version N-3
+    # buffer; nothing is prunable. The dedicated
+    # `test_multi_scope_orphan_is_pruned` covers the prune-path.
+    assert removed == []
 
 
 def test_find_active_version_returns_highest():
@@ -319,4 +329,147 @@ def test_cache_root_missing_returns_empty(tmp_path, installed_plugins):
     removed = cache_prune.prune_inactive_cache_versions(
         cache_root=missing_root, installed_plugins_path=plugins_path
     )
+    assert removed == []
+
+
+# ---------------------------------------------------------------------------
+# v0.1.23 — Multi-scope guard (Finding 2).
+# A project-scoped install pinned far behind a user-scoped install must
+# NOT be pruned. The fix preserves every installed version + a per-version
+# N-3 predecessor buffer, then applies prune only to true orphans.
+# ---------------------------------------------------------------------------
+
+
+def _multi_scope_installed(tmp_path: Path, entries: list[dict]) -> Path:
+    """Write an installed_plugins.json with multiple scope entries."""
+    p = tmp_path / "installed_plugins.json"
+    p.write_text(json.dumps({
+        "version": 2,
+        "plugins": {
+            "coach-claw@coach-claw-plugins": entries,
+        },
+    }))
+    return p
+
+
+def test_lower_scope_installed_version_preserved(cache_root, tmp_path):
+    """Teammate's exact repro: project@0.1.10 + user@0.1.24 → 0.1.10
+    MUST survive prune. The per-installed-version N-3 buffer below
+    0.1.24 covers (0.1.23, 0.1.22, 0.1.21); 0.1.20 falls outside and
+    IS pruned. 0.1.10 stays protected as an installed version."""
+    plugins_path = _multi_scope_installed(tmp_path, [
+        {"scope": "project", "version": "0.1.10", "installPath": "/fake/0.1.10"},
+        {"scope": "user", "version": "0.1.24", "installPath": "/fake/0.1.24"},
+    ])
+    _mkversion(cache_root, "0.1.10")
+    _mkversion(cache_root, "0.1.20")
+    _mkversion(cache_root, "0.1.21")
+    _mkversion(cache_root, "0.1.22")
+    _mkversion(cache_root, "0.1.23")
+    _mkversion(cache_root, "0.1.24")
+
+    removed = cache_prune.prune_inactive_cache_versions(
+        cache_root=cache_root, installed_plugins_path=plugins_path
+    )
+
+    # The load-bearing fix: both installed scope versions survive.
+    assert (cache_root / "0.1.10").exists(), "project-scoped install must survive"
+    assert (cache_root / "0.1.24").exists(), "user-scoped install must survive"
+    # N-3 buffer below 0.1.24 retained.
+    assert (cache_root / "0.1.23").exists()
+    assert (cache_root / "0.1.22").exists()
+    assert (cache_root / "0.1.21").exists()
+    # 0.1.20 is N-4 below 0.1.24 — outside the buffer, gets pruned.
+    assert not (cache_root / "0.1.20").exists()
+    assert [p.name for p in removed] == ["0.1.20"]
+
+
+def test_claude_plugin_root_version_protected(cache_root, installed_plugins, monkeypatch):
+    """`$CLAUDE_PLUGIN_ROOT` resolves to a versioned cache dir for the
+    running session. That version MUST survive prune even when
+    installed_plugins.json no longer lists it (file drift, partial
+    install state, manual edit)."""
+    plugins_path = installed_plugins("0.1.24")
+    _mkversion(cache_root, "0.1.5")
+    active = _mkversion(cache_root, "0.1.24")
+    # Simulate the running process bound to 0.1.5 (e.g. a long-lived
+    # CC session started when 0.1.5 was active).
+    monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(cache_root / "0.1.5"))
+
+    removed = cache_prune.prune_inactive_cache_versions(
+        cache_root=cache_root, installed_plugins_path=plugins_path
+    )
+
+    assert active.exists()
+    assert (cache_root / "0.1.5").exists(), (
+        "CLAUDE_PLUGIN_ROOT version must be protected even when absent "
+        "from installed_plugins.json"
+    )
+    assert removed == []
+
+
+def test_find_installed_versions_returns_full_set(tmp_path):
+    """The new helper returns EVERY parsed version from multi-scope
+    entries, not just the max — that's the load-bearing fix."""
+    plugins_path = _multi_scope_installed(tmp_path, [
+        {"scope": "project", "version": "0.1.10"},
+        {"scope": "user", "version": "0.1.24"},
+    ])
+    versions = cache_prune.find_installed_versions(plugins_path)
+    assert versions == {(0, 1, 10), (0, 1, 24)}
+
+
+def test_find_active_version_backward_compat(tmp_path):
+    """The wrapper still returns the highest version as a dotted string
+    so callers that haven't been migrated keep working."""
+    plugins_path = _multi_scope_installed(tmp_path, [
+        {"scope": "project", "version": "0.1.10"},
+        {"scope": "user", "version": "0.1.24"},
+    ])
+    assert cache_prune.find_active_version(plugins_path) == "0.1.24"
+
+
+def test_multi_scope_orphan_is_pruned(cache_root, tmp_path):
+    """An orphan version BELOW the lowest installed version AND outside
+    every per-installed-version N-3 buffer IS pruned. Regression guard
+    so the multi-scope protection doesn't accidentally freeze the cache."""
+    plugins_path = _multi_scope_installed(tmp_path, [
+        {"scope": "project", "version": "0.1.10"},
+        {"scope": "user", "version": "0.1.24"},
+    ])
+    # 0.1.3 is below 0.1.10 (min installed). N-3 below 0.1.10 keeps
+    # the 3 newest cache versions strictly less than 0.1.10. With
+    # only 0.1.3 + 0.1.5 in cache below 0.1.10, both fit the buffer.
+    # Add 0.1.1 to push 0.1.3 to N-3 and force 0.1.0 out.
+    _mkversion(cache_root, "0.1.0")
+    _mkversion(cache_root, "0.1.1")
+    _mkversion(cache_root, "0.1.3")
+    _mkversion(cache_root, "0.1.5")
+    _mkversion(cache_root, "0.1.10")
+    _mkversion(cache_root, "0.1.24")
+
+    removed = cache_prune.prune_inactive_cache_versions(
+        cache_root=cache_root, installed_plugins_path=plugins_path
+    )
+
+    # 0.1.0 is N-4 below 0.1.10 — outside the buffer, gets pruned.
+    assert not (cache_root / "0.1.0").exists()
+    assert [p.name for p in removed] == ["0.1.0"]
+
+
+def test_empty_installed_set_returns_empty(cache_root, tmp_path):
+    """No anchor (installed_plugins.json has no coach-claw entry and
+    CLAUDE_PLUGIN_ROOT is unset) → never prune. Failsafe against
+    fully-blind deletion."""
+    p = tmp_path / "installed_plugins.json"
+    p.write_text(json.dumps({"version": 2, "plugins": {}}))
+    _mkversion(cache_root, "0.1.10")
+    _mkversion(cache_root, "0.1.24")
+
+    removed = cache_prune.prune_inactive_cache_versions(
+        cache_root=cache_root, installed_plugins_path=p
+    )
+
+    assert (cache_root / "0.1.10").exists()
+    assert (cache_root / "0.1.24").exists()
     assert removed == []

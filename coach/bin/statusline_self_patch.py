@@ -50,6 +50,31 @@ SETTINGS_PATH = Path.home() / ".claude" / "settings.json"
 # `/plugin update` no longer leaves behind a stale-versioned command.
 TRAMPOLINE_NAME = "plugin-statusline.sh"
 PLUGIN_ROOT_CACHE_NAME = ".plugin-root"
+UNINSTALL_PREP_MARKER_NAME = ".uninstall-prepped"
+
+
+def _drop_uninstall_prep_marker(coach_dir: Path) -> None:
+    """Invariant: any write OR observation of a Coach-owned statusLine
+    must clear `.uninstall-prepped`.
+
+    The marker means "the user just ran `--uninstall-prep`; the
+    upcoming `/plugin uninstall coach-claw@coach-claw-plugins` is
+    authorized to bypass the v0.1.20 intercept because the statusLine
+    has been cleared." A live Coach-owned statusLine contradicts that
+    intent — it means either the marker is stale (SessionStart
+    re-installed the entry between prep and uninstall) OR the user
+    changed their mind and is using Coach again. Either way, clearing
+    the marker re-arms the intercept so a future `/plugin uninstall`
+    will warn the user before leaving an orphaned statusLine.
+
+    Fail-soft. Caller is a hook / patcher context; never raise.
+    """
+    try:
+        (coach_dir / UNINSTALL_PREP_MARKER_NAME).unlink()
+    except FileNotFoundError:
+        pass
+    except OSError:
+        pass
 
 # Trampoline body. Resolves the active coach-claw plugin install path
 # from a small cache file (refreshed every SessionStart), falls back to
@@ -66,7 +91,11 @@ ROOT_FILE="$COACH_DIR/.plugin-root"
 
 PLUGIN_ROOT=""
 if [ -r "$ROOT_FILE" ]; then
-  PLUGIN_ROOT=$(cat "$ROOT_FILE" 2>/dev/null | tr -d '[:space:]')
+  # IFS= preserves embedded spaces inside the path; -r preserves
+  # backslashes literally; the bounded < redirect stops at the first
+  # newline. tr -d '[:space:]' would have stripped spaces inside a
+  # valid filesystem path (e.g. "/Users/some user/.claude/...").
+  IFS= read -r PLUGIN_ROOT < "$ROOT_FILE" || true
 fi
 
 if [ -z "$PLUGIN_ROOT" ] || [ ! -d "$PLUGIN_ROOT" ]; then
@@ -311,7 +340,11 @@ def ensure_statusline_installed(
                         coach_dir=coach_dir,
                     )
                 except Exception:
-                    return "matched"  # fail-soft; no rewrite happened
+                    # fail-soft; no rewrite happened, but a Coach wrap
+                    # shape was observed — invalidate any stale prep marker.
+                    _drop_uninstall_prep_marker(coach_dir)
+                    return "matched"
+                _drop_uninstall_prep_marker(coach_dir)
                 if res.get("reason") == "refreshed-path":
                     return "wrap-refreshed"
                 return "matched"
@@ -334,7 +367,13 @@ def ensure_statusline_installed(
                         plugin_root_p, coach_dir=coach_dir
                     )
                     _atomic_write(target, data)
+                    _drop_uninstall_prep_marker(coach_dir)
                     return "refreshed-path"
+                # Matched: an already-current Coach statusLine. Observation
+                # alone invalidates the uninstall-prep marker — a stale
+                # marker plus a Coach-owned statusLine is already the
+                # broken state the v0.1.20 intercept was meant to prevent.
+                _drop_uninstall_prep_marker(coach_dir)
                 return "matched"
 
             # Claimed: auto-wrap on first encounter, unless opted out or
@@ -351,6 +390,7 @@ def ensure_statusline_installed(
             except Exception:
                 res = {"result": "error"}
             if res.get("result") == "wrapped":
+                _drop_uninstall_prep_marker(coach_dir)
                 return "wrapped"
             sys.stderr.write(
                 "coach-claw plugin: settings.json statusLine left "
@@ -360,6 +400,7 @@ def ensure_statusline_installed(
 
         data["statusLine"] = _desired_entry(plugin_root_p, coach_dir=coach_dir)
         _atomic_write(target, data)
+        _drop_uninstall_prep_marker(coach_dir)
         return "installed"
     except Exception:
         return "error"

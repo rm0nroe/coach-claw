@@ -146,7 +146,7 @@ The plugin namespaces all skills under `/coach-claw:`:
 | `/coach-insights` | `/coach-claw:coach-insights` |
 | `/config` | `/coach-claw:config` |
 | _(none — npm-only)_ | `/coach-claw:switch` (flip control to plugin if both installed) |
-| _(none — npm-only)_ | `/coach-claw:doctor` (diagnose plugin state; `--remove-statusline`, `--wrap-statusline`, `--unwrap-statusline` actions) |
+| _(none — npm-only)_ | `/coach-claw:doctor` (diagnose plugin state; `--uninstall-prep [--wipe-data]` for clean pre-uninstall cleanup, `--remove-statusline`, `--wrap-statusline`, `--unwrap-statusline`, `--prune-cache` actions) |
 
 When Claude Code starts a session and finds a custom statusline, the
 plugin auto-wraps it: your existing command keeps rendering, and the

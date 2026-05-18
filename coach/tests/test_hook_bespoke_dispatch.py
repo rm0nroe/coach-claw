@@ -128,8 +128,8 @@ def test_craft_theme_terminal_renders_default_shape(cup):
     # v1.0.10 earning-surface contract: arrow is always ↑ (XP credit
     # direction); negative-direction rows render the positive inverse
     # name (heavy-subagent-delegation → right-sized delegation).
-    assert "> ↑ `safe git hygiene` `🟢🟢🟢🟢⚪` 4/5 · `+2`" in block
-    assert "> ↑ `right-sized delegation` `🟢🟢🟢🟢⚪` 4/5 · `+2`" in block
+    assert "> ↑ `+2` · `safe git hygiene` `🟢🟢🟢🟢⚪` 4/5" in block
+    assert "> ↑ `+2` · `right-sized delegation` `🟢🟢🟢🟢⚪` 4/5" in block
     # Canonical negative name must NOT leak on the earning surface.
     assert "heavy subagent delegation" not in block
     # Bespoke header / glyphs MUST NOT appear.
@@ -313,7 +313,7 @@ def test_bespoke_render_failure_falls_back_to_default(cup, monkeypatch):
     # Must produce a non-None banner (default shape) despite the crash.
     assert block is not None
     # Default shape markers — same as the craft regression test above.
-    assert "> ↑ `safe git hygiene`" in block
+    assert "> ↑ `+2` · `safe git hygiene`" in block
     # No bespoke leakage.
     assert "🦞" not in block
     assert "≋" not in block

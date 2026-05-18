@@ -767,10 +767,10 @@ def _streak_reward_block(
         arrow = "↑"
         signed_xp = f"+{xp}"
         bodies_terminal.append(
-            f"> {arrow} `{rname}` `{filled}` {streak}/{target} · `{signed_xp}`"
+            f"> {arrow} `{signed_xp}` · `{rname}` `{filled}` {streak}/{target}"
         )
         bodies_ide.append(
-            f"{arrow} `{rname}` · `{filled} {streak}/{target}` · `{signed_xp}`"
+            f"{arrow} `{signed_xp}` · `{rname}` · `{filled} {streak}/{target}`"
         )
     if not bodies_terminal:
         return ""

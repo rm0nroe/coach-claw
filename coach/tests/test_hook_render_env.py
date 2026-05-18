@@ -187,7 +187,7 @@ def test_streak_reward_terminal_negative(cup):
           "direction": "negative", "streak": 3, "target": 5, "xp_awarded": 1}],
         env="terminal",
     )
-    expected = "> ↑ `testing during edits` `🟢🟢🟢⚪⚪` 3/5 · `+1`"
+    expected = "> ↑ `+1` · `testing during edits` `🟢🟢🟢⚪⚪` 3/5"
     assert expected in block
     assert "↓" not in block                            # arrow is XP direction, always up
     assert "edits-without-testing" not in block        # slug must not leak
@@ -201,7 +201,7 @@ def test_streak_reward_terminal_positive(cup):
           "direction": "positive", "streak": 4, "target": 5, "xp_awarded": 2}],
         env="terminal",
     )
-    expected = "> ↑ `safe git hygiene` `🟢🟢🟢🟢⚪` 4/5 · `+2`"
+    expected = "> ↑ `+2` · `safe git hygiene` `🟢🟢🟢🟢⚪` 4/5"
     assert expected in block
     assert "↓" not in block
 
@@ -212,7 +212,7 @@ def test_streak_reward_ide_negative(cup):
           "direction": "negative", "streak": 3, "target": 5, "xp_awarded": 1}],
         env="ide",
     )
-    expected = "↑ `testing during edits` · `🟢🟢🟢⚪⚪ 3/5` · `+1`"
+    expected = "↑ `+1` · `testing during edits` · `🟢🟢🟢⚪⚪ 3/5`"
     assert expected in block
     assert "↓" not in block                            # arrow is XP direction, always up
     assert "edits without testing" not in block        # canonical neg must NOT leak
@@ -227,7 +227,7 @@ def test_streak_reward_ide_positive(cup):
           "direction": "positive", "streak": 4, "target": 5, "xp_awarded": 2}],
         env="ide",
     )
-    expected = "↑ `safe git hygiene` · `🟢🟢🟢🟢⚪ 4/5` · `+2`"
+    expected = "↑ `+2` · `safe git hygiene` · `🟢🟢🟢🟢⚪ 4/5`"
     assert expected in block
     assert "↓" not in block
 

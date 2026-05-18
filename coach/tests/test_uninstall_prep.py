@@ -177,3 +177,66 @@ def test_uninstall_prep_writes_marker_intercept_will_recognize(doctor, fake_env,
     # part of cup module-level COACH_DIR contract.
     expected = Path(os.environ["COACH_CONFIG_DIR"]) / ".uninstall-prepped"
     assert marker == expected
+
+
+# ---------------------------------------------------------------------------
+# v0.1.23: abort marker write when statusLine cleanup actually fails.
+# ---------------------------------------------------------------------------
+
+
+def test_uninstall_prep_aborts_on_statusline_error(doctor, fake_env, monkeypatch):
+    """If remove_statusline() returns "error" the marker must NOT be
+    written. Writing it on a failed cleanup lets the next /plugin
+    uninstall silently bypass the v0.1.20 intercept while a Coach
+    statusLine is still in settings.json — exactly the orphan state
+    the intercept was meant to prevent."""
+    _, coach_dir, settings = fake_env
+    monkeypatch.setattr(doctor, "SETTINGS_PATH", settings)
+    monkeypatch.setattr(doctor, "resolve_coach_dir", lambda: coach_dir)
+    monkeypatch.setattr(doctor, "remove_statusline", lambda: {
+        "action": "remove-statusline",
+        "result": "error",
+        "detail": "synthetic test failure",
+    })
+
+    result = doctor.uninstall_prep(wipe_data=False)
+    assert result["result"] == "error"
+    assert "synthetic test failure" in result["detail"]
+    assert not (coach_dir / ".uninstall-prepped").exists(), (
+        "marker must NOT exist after a failed cleanup"
+    )
+
+
+def test_uninstall_prep_writes_marker_when_statusline_skipped(doctor, fake_env, monkeypatch):
+    """`skipped` (statusLine points at a non-Coach command — claimed or
+    integrated-externally) is a safe outcome: uninstall won't leave a
+    Coach orphan. Marker is written."""
+    _, coach_dir, settings = fake_env
+    monkeypatch.setattr(doctor, "SETTINGS_PATH", settings)
+    monkeypatch.setattr(doctor, "resolve_coach_dir", lambda: coach_dir)
+    monkeypatch.setattr(doctor, "remove_statusline", lambda: {
+        "action": "remove-statusline",
+        "result": "skipped",
+        "detail": "statusLine points at a non-Coach command; left untouched.",
+    })
+
+    result = doctor.uninstall_prep(wipe_data=False)
+    assert result["result"] == "prepped"
+    assert (coach_dir / ".uninstall-prepped").exists()
+
+
+def test_uninstall_prep_writes_marker_when_no_op(doctor, fake_env, monkeypatch):
+    """`no-op` (no settings.json or no statusLine key) is a safe outcome.
+    Marker is written."""
+    _, coach_dir, settings = fake_env
+    monkeypatch.setattr(doctor, "SETTINGS_PATH", settings)
+    monkeypatch.setattr(doctor, "resolve_coach_dir", lambda: coach_dir)
+    monkeypatch.setattr(doctor, "remove_statusline", lambda: {
+        "action": "remove-statusline",
+        "result": "no-op",
+        "detail": "no settings.json to modify",
+    })
+
+    result = doctor.uninstall_prep(wipe_data=False)
+    assert result["result"] == "prepped"
+    assert (coach_dir / ".uninstall-prepped").exists()
