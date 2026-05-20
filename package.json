@@ -1,6 +1,6 @@
 {
   "name": "@rm0nroe/coach-claw",
-  "version": "1.0.21",
+  "version": "1.0.23",
   "description": "A self-evolving coaching layer for Claude Code.",
   "license": "MIT",
   "homepage": "https://rm0nroe.github.io/coach-claw/",

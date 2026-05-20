@@ -28,18 +28,30 @@ warn() { printf "\033[33m  WARN: %s\033[0m\n" "$*"; }
 ok()   { printf "\033[32m  OK: %s\033[0m\n" "$*"; }
 die()  { printf "\033[31m  ERROR: %s\033[0m\n" "$*"; exit 1; }
 
+# Allow tests to fake the OS gate without actually running uname.
+# `_coach_uname` returns `${COACH_UNAME_OVERRIDE:-$(uname -s)}` so a test
+# can set COACH_UNAME_OVERRIDE=Linux and exercise the non-macOS path on
+# a macOS dev box.
+_coach_uname() { echo "${COACH_UNAME_OVERRIDE:-$(uname -s)}"; }
+
 # --- Flags -------------------------------------------------------------------
 # --seed / --bootstrap → after install, run insights.sh 7d once so the
 # user doesn't have an empty profile on first Claude Code session.
 
 SEED=0
 NO_SEED=0
+LAUNCHD=0
+NO_LAUNCHD=0
 PRUNE_BACKUPS=1
 FRESH=0
+SEED_DECLINED_AT_PROMPT=0
+LAUNCHD_DECLINED_AT_PROMPT=0
 for arg in "$@"; do
   case "$arg" in
     --seed|--bootstrap) SEED=1 ;;
     --no-seed) NO_SEED=1 ;;
+    --launchd) LAUNCHD=1 ;;
+    --no-launchd) NO_LAUNCHD=1 ;;
     --prune-backups) PRUNE_BACKUPS=1 ;;
     --no-prune-backups) PRUNE_BACKUPS=0 ;;
     --fresh) FRESH=1 ;;
@@ -49,17 +61,26 @@ Usage: $(basename "$0") [--seed | --no-seed] [--no-prune-backups] [--fresh]
 
   --seed / --bootstrap   After install, run insights.sh 7d against your
                          existing Claude Code transcripts so the profile
-                         isn't empty on your first session. Safe to omit
-                         (you can run ~/.claude/coach/bin/insights.sh 7d
-                         later, or invoke /coach-insights inside Claude
-                         Code).
+                         isn't empty on your first session. Equivalent
+                         to accepting the interactive prompt. Safe to
+                         omit in a tty (you'll be asked); CI/piped
+                         installs default to skipping.
 
-  --no-seed              Explicitly skip seeding. The seed step is already
-                         opt-in via --seed today, so this is forward-
-                         compatible: scripted/CI installs use --no-seed
-                         to make their intent unambiguous and to suppress
-                         any future auto-seed prompt. Mutually exclusive
-                         with --seed.
+  --no-seed              Explicitly skip seeding and suppress the
+                         interactive prompt. Use this for scripted/CI
+                         installs that should never block on input.
+                         Mutually exclusive with --seed.
+
+  --launchd              After install, run install-launchd.sh to register
+                         the macOS daily Coach insights job. Equivalent to
+                         accepting the interactive prompt. Safe to omit in
+                         a tty (you'll be asked); CI/piped installs default
+                         to skipping. macOS-only.
+
+  --no-launchd           Explicitly skip launchd registration and suppress
+                         the interactive prompt. Use this for scripted/CI
+                         installs that should never block on input.
+                         Mutually exclusive with --launchd.
 
   --no-prune-backups     Keep all coach.bak.*, settings.json.bak.*, and
                          hooks/*.bak.* files. Default is to keep only the
@@ -82,6 +103,11 @@ done
 # touch anything on disk when the args are nonsense.
 if [[ "$SEED" == "1" && "$NO_SEED" == "1" ]]; then
   printf "\033[31m  ERROR: --seed and --no-seed are mutually exclusive.\033[0m\n" >&2
+  exit 1
+fi
+
+if [[ "$LAUNCHD" == "1" && "$NO_LAUNCHD" == "1" ]]; then
+  printf "\033[31m  ERROR: --launchd and --no-launchd are mutually exclusive.\033[0m\n" >&2
   exit 1
 fi
 
@@ -536,6 +562,70 @@ if [[ "$PRUNE_BACKUPS" == "1" ]]; then
   ok "pruned $pruned old backup(s)"
 fi
 
+# --- Auto-seed prompt (TTY-gated) -------------------------------------------
+# When neither --seed nor --no-seed was passed AND stdin is a real tty AND
+# the user has existing transcripts, ask once before the seed step. Empty
+# input or y/Y/yes accepts (sets SEED=1 so the existing seed branch fires);
+# anything else declines (sets NO_SEED=1 + SEED_DECLINED_AT_PROMPT=1 so the
+# banner uses the prompt-aware copy, not the --no-seed flag copy). Non-tty
+# installs (CI, piped, < /dev/null) skip this entirely
+# and preserve the original silent behavior.
+
+if [[ "$SEED" == "0" && "$NO_SEED" == "0" ]] && [[ -t 0 ]]; then
+  if [[ -d "$HOME/.claude/projects" ]] && \
+     find "$HOME/.claude/projects" -name '*.jsonl' -type f 2>/dev/null | head -1 | grep -q .; then
+    printf "\n"
+    bold "Seed profile?"
+    note "Found existing Claude Code transcripts at \$HOME/.claude/projects."
+    note "Seeding analyzes the last 7 days so your profile isn't empty on first session."
+    printf "  Run seed now? [Y/n] "
+    read -r SEED_REPLY
+    # Exact match only — mixed-case like 'Yes' or 'YeS' falls through to decline.
+    # Most users hit Enter (the default) anyway; users typing a deliberate reply
+    # use the canonical 'y' or 'n' shown in the prompt.
+    case "$SEED_REPLY" in
+      ""|y|Y|yes|YES) SEED=1 ;;
+      *) NO_SEED=1; SEED_DECLINED_AT_PROMPT=1 ;;
+    esac
+  fi
+fi
+
+# --- Auto-launchd-registration prompt (macOS + TTY-gated) -------------------
+# When stdin is a real tty AND we're on macOS AND neither --launchd nor
+# --no-launchd was passed AND the live plist doesn't already exist, ask
+# once before kicking off install-launchd.sh. Default Y accepts and runs
+# the installer; anything else sets LAUNCHD_DECLINED_AT_PROMPT=1 so the
+# closing banner uses prompt-aware copy. Non-tty installs (CI, piped) and
+# non-macOS users skip this entirely.
+#
+# COACH_LAUNCHD_PROMPT_DRY_RUN=1 lets tests exercise the prompt without
+# spawning a real install-launchd.sh (which would register an actual
+# daily job on the dev machine). The dry-run path prints a sentinel
+# string the test asserts on.
+#
+# LAUNCHAGENTS_DIR matches the override used by the launchd-recovery
+# block earlier in this script — tests stage fixtures in a tmp dir.
+
+if [[ "$LAUNCHD" == "0" && "$NO_LAUNCHD" == "0" ]] && [[ -t 0 ]] \
+   && [[ "$(_coach_uname)" == "Darwin" ]]; then
+  _LA_DIR_PROMPT="${LAUNCHAGENTS_DIR:-$HOME/Library/LaunchAgents}"
+  if [[ ! -e "$_LA_DIR_PROMPT/com.local.claude-coach.plist" ]]; then
+    printf "\n"
+    bold "Register daily Coach insights cron?"
+    note "Coach insights runs daily at 04:00 local — analyzes your last 24h"
+    note "of transcripts so the profile + watch-list stay fresh."
+    # Exact match only — mixed-case like 'Yes' or 'YeS' falls through to
+    # decline. Most users hit Enter (the default) anyway; users typing a
+    # deliberate reply use the canonical 'y' or 'n' shown in the prompt.
+    printf "  Register now? [Y/n] "
+    read -r LAUNCHD_REPLY
+    case "$LAUNCHD_REPLY" in
+      ""|y|Y|yes|YES) LAUNCHD=1 ;;
+      *) NO_LAUNCHD=1; LAUNCHD_DECLINED_AT_PROMPT=1 ;;
+    esac
+  fi
+fi
+
 # --- Optional: seed the profile from recent transcripts ---------------------
 
 SEEDED=0
@@ -555,17 +645,56 @@ if [[ "$SEED" == "1" ]]; then
   fi
 fi
 
+# --- Optional: register the macOS daily launchd job -------------------------
+
+LAUNCHD_REGISTERED=0
+if [[ "$LAUNCHD" == "1" ]]; then
+  bold "Registering daily Coach insights cron (launchd)"
+  if [[ "${COACH_LAUNCHD_PROMPT_DRY_RUN:-0}" == "1" ]]; then
+    # Tests assert on this sentinel string; never run the real installer.
+    ok "would run install-launchd.sh (dry-run for tests)"
+    LAUNCHD_REGISTERED=1
+  else
+    if [[ -x "$BUNDLE_DIR/install-launchd.sh" ]]; then
+      if "$BUNDLE_DIR/install-launchd.sh" 2>&1 | sed 's/^/  /'; then
+        ok "launchd job registered"
+        LAUNCHD_REGISTERED=1
+      else
+        warn "install-launchd.sh did not complete cleanly — non-fatal, run it manually later"
+      fi
+    else
+      warn "install-launchd.sh missing or not executable at $BUNDLE_DIR — skipping"
+    fi
+  fi
+fi
+
 # --- Done --------------------------------------------------------------------
 
 bold "Installed. Coach Claw is now active."
 
 # Seed-step copy depends on the flag the user passed (or didn't).
+# Decline-at-prompt wins over generic NO_SEED so the user sees prompt-aware copy.
 if [[ "$SEEDED" == "1" ]]; then
   SEED_LINE="profile seeded from the last 7 days of transcripts."
+elif [[ "$SEED_DECLINED_AT_PROMPT" == "1" ]]; then
+  SEED_LINE="skipped at prompt; you can seed later: ~/.claude/coach/bin/insights.sh 7d"
 elif [[ "$NO_SEED" == "1" ]]; then
   SEED_LINE="--no-seed honored; to seed later: ~/.claude/coach/bin/insights.sh 7d"
 else
   SEED_LINE="empty profile (no --seed). Re-run with --seed to bootstrap, or just use Claude Code — the daily cron will fill it in."
+fi
+
+# Launchd-step copy branches on whether we registered, the user declined at the
+# prompt, or neither (default static command for non-prompt installs).
+if [[ "$LAUNCHD_REGISTERED" == "1" ]]; then
+  LAUNCHD_STEP="macOS launchd job registered — running now, then daily at 04:00 local.
+        Tail the log:  tail -f /tmp/claude-coach.log"
+elif [[ "$LAUNCHD_DECLINED_AT_PROMPT" == "1" ]]; then
+  LAUNCHD_STEP="macOS launchd: skipped at prompt; you can register later: ./install-launchd.sh
+        Linux:  README.md → Install → step 3"
+else
+  LAUNCHD_STEP="macOS:  npx @rm0nroe/coach-claw@latest launchd
+        Linux:  README.md → Install → step 3"
 fi
 cat <<EOF
 
@@ -586,8 +715,7 @@ What's next:
           npx @rm0nroe/coach-claw@latest config set --theme ocean
 
   4. Schedule daily auto-analysis:
-        macOS:  npx @rm0nroe/coach-claw@latest launchd
-        Linux:  README.md → Install → step 3
+        $LAUNCHD_STEP
 
   5. Other slash commands:  /coach status   /coach off | on   /coach uninstall
 

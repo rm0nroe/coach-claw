@@ -61,19 +61,29 @@ CLI by default (run `/coach-claw:switch` to flip control).
 2. **Run the installer**
 
    ```bash
-   npx @rm0nroe/coach-claw@latest install --seed
+   npx @rm0nroe/coach-claw@latest install
    ```
 
-   `--seed` is optional but recommended — it pre-populates your profile
-   from the last 7 days of transcripts so your first session isn't empty.
-   See [Install options](#install-options) for the full flag list.
+   If existing transcripts are found under `~/.claude/projects/`, the
+   installer asks once whether to run a 7-day seeding pass to pre-populate
+   your profile. Press Enter to accept or `n` to skip. The prompt only
+   fires in an interactive terminal; CI and piped installs default to
+   skipping. Pass `--seed` to accept non-interactively, or `--no-seed` to
+   suppress the prompt entirely (useful for scripted installs). See
+   [Install options](#install-options) for the full flag list.
 
 3. **Register the daily insights cron**
 
-   - **macOS**:
+   - **macOS** — the installer asks once, in a terminal session, whether to
+     register the daily Coach insights cron now. Press Enter to accept
+     (default Y) or type `n` to skip. The prompt only fires in an
+     interactive terminal; CI and piped installs skip automatically.
+     If you skipped or want to register later:
      ```bash
      npx @rm0nroe/coach-claw@latest launchd
      ```
+     Pass `--launchd` to accept non-interactively (useful in scripts), or
+     `--no-launchd` to suppress the prompt entirely.
    - **Linux** — `crontab -e`, then add (runs daily at 04:00 local):
      ```
      0 4 * * * $HOME/.claude/coach/bin/insights.sh 1d >> /tmp/claude-coach.log 2>&1
@@ -91,8 +101,8 @@ CLI by default (run `/coach-claw:switch` to flip control).
    /coach status
    ```
 
-   You should see your level, ELO, and (if `--seed` was passed) a
-   tracked weakness or two.
+   You should see your level, ELO, and (if seeding ran) a tracked
+   weakness or two.
 
 5. **(Optional) Customize the look**
 
@@ -115,8 +125,8 @@ CLI by default (run `/coach-claw:switch` to flip control).
 
 | Flag | Effect |
 |---|---|
-| `--seed` (alias `--bootstrap`) | After install, run a 7-day insights pass against your existing transcripts so the profile isn't empty on day one. |
-| `--no-seed` | Skip seeding explicitly (forward-compatible with a future TTY-gated seed prompt). Mutually exclusive with `--seed`. |
+| `--seed` (alias `--bootstrap`) | Accept the interactive seed prompt non-interactively — runs a 7-day insights pass after install so the profile isn't empty on day one. |
+| `--no-seed` | Suppress the interactive seed prompt entirely. Use for scripted or CI installs. Mutually exclusive with `--seed`. |
 | `--fresh` | Skip recovery from a prior `/coach uninstall`. Forces a true fresh install (drops any `coach.bak.<ts>/` siblings). |
 | `--no-prune-backups` | Keep ALL `coach.bak.<ts>/`, `settings.json.bak.<ts>`, and `hooks/*.bak.<ts>`. Default trims to the 3 most recent of each kind. |
 | `-h`, `--help` | Print full usage and exit. |

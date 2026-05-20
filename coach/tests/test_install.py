@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import pty
 import re
 import shlex
 import shutil
@@ -36,10 +37,72 @@ def _run_install(
         cwd=repo,
         env=env,
         text=True,
+        stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         timeout=30,
     )
+
+
+def _run_install_with_pty(
+    repo: Path,
+    claude_dir: Path,
+    reply: str,
+    *,
+    extra_env: dict[str, str] | None = None,
+    args: list[str] | None = None,
+    fake_home: Path | None = None,
+) -> subprocess.CompletedProcess:
+    """Run install.sh with a real pty as stdin and pre-stuff `reply`.
+
+    Pre-writing the reply to the master side before the child starts is
+    the standard expect-style pattern: bash's `read -r` reads from the
+    pty buffer when it gets to that line, regardless of which side
+    wrote first. Robust against the install.sh startup time variance
+    that a sleep-then-write approach would race on.
+
+    `fake_home` overrides `$HOME` so the test controls whether
+    `$HOME/.claude/projects` exists for the prompt gate; without this
+    the child reads the developer's real ~/.claude/projects.
+    """
+    master, slave = pty.openpty()
+    master_closed = False
+    try:
+        env = os.environ.copy()
+        env.update({"CLAUDE_DIR": str(claude_dir), **_git_env()})
+        if fake_home is not None:
+            env["HOME"] = str(fake_home)
+        if extra_env:
+            env.update(extra_env)
+        os.write(master, reply.encode())
+        try:
+            proc = subprocess.Popen(
+                ["bash", str(repo / "install.sh"), *(args or [])],
+                cwd=repo,
+                env=env,
+                stdin=slave,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+        finally:
+            os.close(slave)
+        try:
+            out, err = proc.communicate(timeout=60)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            out, err = proc.communicate()
+            os.close(master)
+            master_closed = True
+            raise
+        os.close(master)
+        master_closed = True
+        return subprocess.CompletedProcess(
+            proc.args, proc.returncode, out, err
+        )
+    finally:
+        if not master_closed:
+            os.close(master)
 
 
 def test_install_uses_custom_claude_dir_in_generated_commands(tmp_path: Path) -> None:
@@ -954,6 +1017,45 @@ def test_install_rejects_seed_and_no_seed_together(tmp_path: Path) -> None:
     )
 
 
+def test_install_tty_prompt_default_yes_seeds(tmp_path: Path) -> None:
+    """When stdin is a tty and the user hits Enter, the seed step runs.
+
+    Pin the default-Y semantics: empty input == accept. This is the
+    fresh-install happy path the backlog item was written for —
+    new users get a populated profile without re-running with --seed.
+    """
+    repo = Path(__file__).resolve().parents[2]
+    if not (repo / "install.sh").exists():
+        pytest.skip("install.sh is only present in the shareable repo checkout")
+
+    fake_home = tmp_path / "fake_home"
+    projects = fake_home / ".claude" / "projects" / "fake-project"
+    projects.mkdir(parents=True)
+    # Minimal valid JSONL — one well-formed event is enough for the gate
+    # to consider the directory non-empty. Content doesn't matter; the
+    # seed step's analyzer reads it but never asserts on shape here.
+    (projects / "transcript.jsonl").write_text(
+        '{"type":"user","timestamp":"2026-05-19T00:00:00Z"}\n'
+    )
+
+    claude_dir = tmp_path / "Claude Dir"
+    result = _run_install_with_pty(
+        repo, claude_dir, reply="\n", fake_home=fake_home,
+        args=["--no-launchd"],
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+    # The prompt itself must be visible to the user.
+    assert "Seed profile?" in result.stdout, (
+        "expected prompt header in stdout; got:\n" + result.stdout
+    )
+    # And the seed branch must have actually executed.
+    assert "Seeding profile" in result.stdout, (
+        "Enter (default Y) must trigger the seed branch; got:\n"
+        + result.stdout
+    )
+
+
 def test_install_creates_configure_py(tmp_path: Path) -> None:
     """Phase 2 installer must ship coach/bin/configure.py executable —
     it's the entrypoint the npm wrapper calls for `coach-claw config
@@ -1147,4 +1249,327 @@ def test_install_wrap_helper_respects_optout_marker(tmp_path: Path) -> None:
     new_cmd = json.loads(settings.read_text())["statusLine"]["command"]
     assert new_cmd == f"bash {user_script}", (
         f"opt-out marker ignored — settings.json was rewrapped: {new_cmd!r}"
+    )
+
+
+def test_install_tty_prompt_n_skips_seed_and_banner_acknowledges(
+    tmp_path: Path,
+) -> None:
+    """Declining the prompt with 'n' must skip the seed branch AND
+    surface a banner line that distinguishes 'you declined the prompt'
+    from 'you passed --no-seed on the command line'.
+
+    The distinction matters because the --no-seed banner copy ('
+    --no-seed honored; to seed later: ...') implies the user knew the
+    flag exists. A user who hit 'n' at the prompt did not — they need
+    the explicit re-seed command spelled out without flag jargon.
+    """
+    repo = Path(__file__).resolve().parents[2]
+    if not (repo / "install.sh").exists():
+        pytest.skip("install.sh is only present in the shareable repo checkout")
+
+    fake_home = tmp_path / "fake_home"
+    projects = fake_home / ".claude" / "projects" / "fake-project"
+    projects.mkdir(parents=True)
+    (projects / "transcript.jsonl").write_text(
+        '{"type":"user","timestamp":"2026-05-19T00:00:00Z"}\n'
+    )
+
+    claude_dir = tmp_path / "Claude Dir"
+    result = _run_install_with_pty(
+        repo, claude_dir, reply="n\n", fake_home=fake_home,
+        args=["--no-launchd"],
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+    # Seed branch must not have fired.
+    assert "Seeding profile" not in result.stdout, (
+        "'n' at the prompt must suppress the seed branch entirely"
+    )
+    # Banner must use the prompt-decline copy, not the --no-seed copy.
+    assert "you can seed later" in result.stdout.lower(), (
+        "banner should acknowledge the declined prompt with explicit "
+        "re-seed instructions; got:\n" + result.stdout
+    )
+    # And specifically must NOT use the --no-seed flag-honored phrasing,
+    # because the user did not pass that flag.
+    assert "--no-seed honored" not in result.stdout, (
+        "prompt-decline banner must not falsely claim --no-seed was passed"
+    )
+
+
+def test_install_tty_prompt_skipped_when_no_projects_dir(
+    tmp_path: Path,
+) -> None:
+    """A fresh box with no $HOME/.claude/projects must not see the
+    prompt — there are no transcripts to seed from.
+
+    Regression guard: the gate has to short-circuit on missing-dir
+    BEFORE `read -r` fires; otherwise install hangs forever waiting
+    on input that never comes (pty stdin is held open by the test).
+    """
+    repo = Path(__file__).resolve().parents[2]
+    if not (repo / "install.sh").exists():
+        pytest.skip("install.sh is only present in the shareable repo checkout")
+
+    fake_home = tmp_path / "fake_home"
+    fake_home.mkdir()
+    # Deliberately NO .claude/projects under fake_home.
+
+    claude_dir = tmp_path / "Claude Dir"
+    # Even though we pre-stuff "\n", the prompt must never fire — so
+    # the input is ignored and install completes normally.
+    result = _run_install_with_pty(
+        repo, claude_dir, reply="\n", fake_home=fake_home,
+        args=["--no-launchd"],
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+    assert "Seed profile?" not in result.stdout, (
+        "prompt must not fire when $HOME/.claude/projects is missing"
+    )
+    # Default no-flag banner copy must apply.
+    assert "empty profile (no --seed)" in result.stdout, (
+        "default banner expected when no flag and no prompt"
+    )
+
+
+def test_install_tty_prompt_skipped_when_projects_dir_has_no_jsonl(
+    tmp_path: Path,
+) -> None:
+    """projects dir exists but has no .jsonl files — the find-gate
+    must keep the prompt silent. Without the gate, the seed step
+    would run against zero transcripts and emit a noisy 'no work
+    to do' line over an empty profile.
+    """
+    repo = Path(__file__).resolve().parents[2]
+    if not (repo / "install.sh").exists():
+        pytest.skip("install.sh is only present in the shareable repo checkout")
+
+    fake_home = tmp_path / "fake_home"
+    projects = fake_home / ".claude" / "projects" / "some-old-project"
+    projects.mkdir(parents=True)
+    # Deliberately no .jsonl — a stray sidecar file or empty leftover
+    # from a deleted project. The find-gate must treat this as
+    # "nothing to seed from."
+    (projects / "stale.json").write_text("{}\n")
+
+    claude_dir = tmp_path / "Claude Dir"
+    result = _run_install_with_pty(
+        repo, claude_dir, reply="\n", fake_home=fake_home,
+        args=["--no-launchd"],
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+    assert "Seed profile?" not in result.stdout, (
+        "prompt must not fire when projects dir has no .jsonl files"
+    )
+
+
+def test_install_help_documents_auto_prompt(tmp_path: Path) -> None:
+    """--help must mention the TTY-gated auto-prompt so users know
+    the seed step is no longer flag-only.
+    """
+    repo = Path(__file__).resolve().parents[2]
+    if not (repo / "install.sh").exists():
+        pytest.skip("install.sh is only present in the shareable repo checkout")
+
+    claude_dir = tmp_path / "Claude Dir"
+    result = _run_install(repo, claude_dir, args=["--help"])
+    assert result.returncode == 0, result.stdout + result.stderr
+
+    out_lower = result.stdout.lower()
+    # Anchor on a phrase the help text will commit to — guards against
+    # the docs drifting to flag-only language again.
+    assert "interactive" in out_lower and "prompt" in out_lower, (
+        "--help must mention the interactive prompt; got:\n"
+        + result.stdout
+    )
+
+
+def test_install_tty_launchd_prompt_default_yes_registers(tmp_path: Path) -> None:
+    """When stdin is a tty on macOS and the user hits Enter, the
+    launchd-registration step runs.
+
+    Uses COACH_LAUNCHD_PROMPT_DRY_RUN=1 so install.sh prints a
+    "would run install-launchd.sh" message instead of actually
+    spawning the launchd installer (which would register a real
+    daily job on the test machine).
+    """
+    repo = Path(__file__).resolve().parents[2]
+    if not (repo / "install.sh").exists():
+        pytest.skip("install.sh is only present in the shareable repo checkout")
+
+    fake_home = tmp_path / "fake_home"
+    fake_home.mkdir()
+    # No .claude/projects → seed prompt won't fire, so the only pty
+    # input gets consumed by the launchd prompt.
+
+    claude_dir = tmp_path / "Claude Dir"
+    result = _run_install_with_pty(
+        repo, claude_dir, reply="\n", fake_home=fake_home,
+        args=["--no-seed"],
+        extra_env={
+            "COACH_LAUNCHD_PROMPT_DRY_RUN": "1",
+            # LaunchAgents dir is empty in the temp tree, so the
+            # "plist already exists" gate doesn't fire.
+            "LAUNCHAGENTS_DIR": str(tmp_path / "LaunchAgents"),
+        },
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+    # The prompt header must be visible.
+    assert "Register daily Coach insights cron?" in result.stdout, (
+        "expected launchd prompt header in stdout; got:\n" + result.stdout
+    )
+    # And the dry-run message must show the installer would have run.
+    assert "would run install-launchd.sh" in result.stdout, (
+        "Enter (default Y) must trigger the launchd-installer dry-run; "
+        "got:\n" + result.stdout
+    )
+
+
+def test_install_tty_launchd_prompt_n_skips_and_banner_acknowledges(
+    tmp_path: Path,
+) -> None:
+    """Declining the launchd prompt with 'n' must skip registration AND
+    surface a banner line that distinguishes 'you declined the prompt'
+    from 'you passed --no-launchd on the command line'.
+
+    Same distinction the seed prompt makes — a user who hit 'n' did
+    not know about the flag and needs the explicit re-run command
+    without flag jargon.
+    """
+    repo = Path(__file__).resolve().parents[2]
+    if not (repo / "install.sh").exists():
+        pytest.skip("install.sh is only present in the shareable repo checkout")
+
+    fake_home = tmp_path / "fake_home"
+    fake_home.mkdir()
+
+    claude_dir = tmp_path / "Claude Dir"
+    result = _run_install_with_pty(
+        repo, claude_dir, reply="n\n", fake_home=fake_home,
+        args=["--no-seed"],
+        extra_env={
+            "COACH_LAUNCHD_PROMPT_DRY_RUN": "1",
+            "LAUNCHAGENTS_DIR": str(tmp_path / "LaunchAgents"),
+        },
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+    # Registration must not have fired (dry-run sentinel absent).
+    assert "would run install-launchd.sh" not in result.stdout, (
+        "'n' at the prompt must suppress the launchd installer entirely"
+    )
+    # Banner must use the prompt-decline copy.
+    assert "skipped at prompt; you can register later" in result.stdout.lower(), (
+        "banner should acknowledge the declined prompt with explicit "
+        "re-run instructions; got:\n" + result.stdout
+    )
+
+
+def test_install_tty_launchd_prompt_skipped_when_plist_exists(
+    tmp_path: Path,
+) -> None:
+    """If the live plist already exists at LAUNCHAGENTS_DIR/com.local.claude-coach.plist
+    (upgrade install), the prompt must not fire. Re-prompting on every
+    upgrade would be a usability regression.
+
+    Regression guard: the gate has to short-circuit on plist-exists
+    BEFORE `read -r` fires; otherwise the upgrade install hangs forever
+    waiting on input that never comes.
+    """
+    repo = Path(__file__).resolve().parents[2]
+    if not (repo / "install.sh").exists():
+        pytest.skip("install.sh is only present in the shareable repo checkout")
+
+    fake_home = tmp_path / "fake_home"
+    fake_home.mkdir()
+    la_dir = tmp_path / "LaunchAgents"
+    la_dir.mkdir()
+    # Pre-seed the live plist as if a prior install-launchd.sh ran.
+    # Contents don't matter — only presence does.
+    (la_dir / "com.local.claude-coach.plist").write_text(
+        '<?xml version="1.0" encoding="UTF-8"?>\n<plist><dict/></plist>\n'
+    )
+
+    claude_dir = tmp_path / "Claude Dir"
+    result = _run_install_with_pty(
+        repo, claude_dir, reply="\n", fake_home=fake_home,
+        args=["--no-seed"],
+        extra_env={
+            "COACH_LAUNCHD_PROMPT_DRY_RUN": "1",
+            "LAUNCHAGENTS_DIR": str(la_dir),
+        },
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+    assert "Register daily Coach insights cron?" not in result.stdout, (
+        "prompt must not fire when the live plist already exists"
+    )
+    # The default banner step (existing static command) is what the user
+    # should see when neither registration nor decline happened.
+    assert "npx @rm0nroe/coach-claw@latest launchd" in result.stdout, (
+        "default step-4 banner copy expected when no prompt fired"
+    )
+
+
+def test_install_tty_launchd_prompt_skipped_on_non_macos(
+    tmp_path: Path,
+) -> None:
+    """Linux users must not see the launchd prompt. Uses
+    COACH_UNAME_OVERRIDE=Linux to exercise the gate on a macOS dev
+    box without actually running on Linux.
+    """
+    repo = Path(__file__).resolve().parents[2]
+    if not (repo / "install.sh").exists():
+        pytest.skip("install.sh is only present in the shareable repo checkout")
+
+    fake_home = tmp_path / "fake_home"
+    fake_home.mkdir()
+
+    claude_dir = tmp_path / "Claude Dir"
+    result = _run_install_with_pty(
+        repo, claude_dir, reply="\n", fake_home=fake_home,
+        args=["--no-seed"],
+        extra_env={
+            "COACH_LAUNCHD_PROMPT_DRY_RUN": "1",
+            "COACH_UNAME_OVERRIDE": "Linux",
+            "LAUNCHAGENTS_DIR": str(tmp_path / "LaunchAgents"),
+        },
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+    assert "Register daily Coach insights cron?" not in result.stdout, (
+        "launchd prompt must not fire on non-macOS"
+    )
+
+
+def test_install_help_documents_launchd_prompt(tmp_path: Path) -> None:
+    """--help must mention the launchd interactive prompt so users know
+    the step is no longer flag-only on macOS.
+    """
+    repo = Path(__file__).resolve().parents[2]
+    if not (repo / "install.sh").exists():
+        pytest.skip("install.sh is only present in the shareable repo checkout")
+
+    claude_dir = tmp_path / "Claude Dir"
+    result = _run_install(repo, claude_dir, args=["--help"])
+    assert result.returncode == 0, result.stdout + result.stderr
+
+    out_lower = result.stdout.lower()
+    # Anchor on both flags appearing in the help, since they were added
+    # in Task 1's USAGE heredoc update. Also check for "interactive
+    # prompt" to ensure the help text actually describes the prompt
+    # path, not just the flags as standalone options.
+    assert "--launchd" in result.stdout, (
+        "--help must list the --launchd flag; got:\n" + result.stdout
+    )
+    assert "--no-launchd" in result.stdout, (
+        "--help must list the --no-launchd flag; got:\n" + result.stdout
+    )
+    assert "interactive prompt" in out_lower, (
+        "--help must describe the interactive prompt path; got:\n"
+        + result.stdout
     )

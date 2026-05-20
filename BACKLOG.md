@@ -142,30 +142,22 @@ Candidate future work.
   shell's `PYENV_VERSION` which may not be set inside Claude Code's
   non-interactive hook shell. Consider resolving to the actual
   interpreter via `pyenv which python3` at install time.
-- `[ ]` Interactive seed prompt in `install.sh`. Today the installer
-  is fully non-interactive: a fresh user runs `./install.sh` and
-  lands with an empty profile, has to read the "Next steps" block,
-  and decide whether to re-run with `--seed`. Add a TTY-gated prompt
-  before the seed step (only when stdin is a tty AND `--seed` was
-  not passed AND `~/.claude/projects/` exists with transcript data):
-  "Seed profile from the last 7 days of your existing Claude Code
-  transcripts now? [Y/n]" defaulting to Y. Non-tty runs (CI, piped,
-  `< /dev/null`) preserve the current behavior. Also add `--no-seed`
-  for users who want to suppress the prompt without piping. Bonus:
-  same shape can ask about `install-launchd.sh` registration so
-  first-run ends with a fully-configured cron, not a manual second
-  step.
-- `[ ]` `COACH_DISABLE_WEEKLY=1` opt-out. The weekly LLM step is
-  fail-hard (`insights-llm.sh` exit 6) when `claude` is missing from
-  PATH / exits nonzero / times out. Users on plans without
-  `claude -p` access (or who removed the binary intentionally) see
-  an exit-6 stderr line on every session start until the throttle's
-  7-day window passes. Add an opt-out: `COACH_DISABLE_WEEKLY=1` in
-  env, or a `weekly_disabled: true` flag in
-  `~/.claude/coach/.user_config.json`, read by the SessionStart hook
-  so the wrapper is never spawned for these users. Pair with a
-  one-line note in the wrapper's exit-6 stderr ("set
-  COACH_DISABLE_WEEKLY=1 to silence") for self-service.
+- `[x]` ~~Interactive seed prompt in `install.sh`.~~ Shipped in v1.0.22
+  + v0.1.26 (2026-05-19). TTY-gated `[Y/n]` prompt fires once on install when
+  `$HOME/.claude/projects` has transcripts and neither `--seed` nor
+  `--no-seed` was passed. Default Y accepts and runs the seed step;
+  any other reply declines with a prompt-aware banner. Non-tty
+  installs (CI, piped) preserve the previous silent behavior. Five
+  new regression tests pin the gate composition and banner copy.
+- `[x]` ~~Interactive launchd-registration prompt.~~ Shipped in v1.0.23
+  + v0.1.27 (2026-05-20). TTY-gated `[Y/n]` prompt fires once on macOS install
+  when neither `--launchd` nor `--no-launchd` was passed and the live
+  plist doesn't already exist. Default Y accepts and runs
+  `install-launchd.sh`; any other reply declines with a prompt-aware
+  banner that swaps step 4 to the explicit re-run command. Non-tty
+  installs (CI, piped) and Linux preserve the previous behavior. Five
+  new regression tests pin the gate composition (macOS, tty,
+  plist-doesn't-exist, both flags absent) and banner copy.
 
 ## Testing
 
