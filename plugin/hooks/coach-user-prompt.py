@@ -1851,14 +1851,22 @@ def _streak_bar(
     *,
     fill_glyph: str = "🔴",
     empty_glyph: str = "⚪",
+    full_glyph: str | None = None,
 ) -> str:
     """Streak bar: e.g. 🔴🔴🔴⚪⚪ for 3/5. Emoji glyphs carry color
     intrinsically so the bar reads identically in Markdown chat and in
     /coach status without ANSI escapes. Default 🔴/⚪ is reserved for
     the tip-attribution streak ladder. Other surfaces pass their own
     glyphs — 🟢/⚪ for baseline progress (mid-streak banners, ack
-    banners, /coach status rows), 🟡/⚫️ for graduation ceremony bars."""
+    banners, /coach status rows), 🟡/⚫️ for graduation ceremony bars.
+
+    `full_glyph`, when given, replaces the ENTIRE bar with that glyph
+    repeated `target` times once the streak completes (streak >= target).
+    The streak ladder passes 🔥 so a maxed bar reads 🔥🔥🔥🔥🔥 instead of
+    a row of fill glyphs."""
     streak = max(0, min(streak, target))
+    if full_glyph is not None and streak >= target:
+        return full_glyph * target
     return fill_glyph * streak + empty_glyph * (target - streak)
 
 
@@ -2045,7 +2053,7 @@ def _xp_attribution(tip: dict, env: str = "terminal") -> list[str]:
     """
     streak = int(tip.get("clean_streak", 0))
     target = GRADUATION_STREAK_TARGET
-    bar = _streak_bar(streak, target)
+    bar = _streak_bar(streak, target, fill_glyph="🟥", empty_glyph="⬜️", full_glyph="🔥")
 
     kind = tip.get("kind", "weakness")
     entry_id = tip.get("entry_id") or ""
@@ -2062,7 +2070,7 @@ def _xp_attribution(tip: dict, env: str = "terminal") -> list[str]:
 
     if kind == "strength":
         streak = int(tip.get("positive_streak", 0) or 0)
-        bar = _streak_bar(streak, target)
+        bar = _streak_bar(streak, target, fill_glyph="🟥", empty_glyph="⬜️", full_glyph="🔥")
         ready = streak >= target
         grad_tail = (
             f"→ +{GRADUATION_XP} mastery bonus ready"

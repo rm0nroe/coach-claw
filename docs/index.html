@@ -638,6 +638,45 @@
     margin-top: 36px;
   }
 
+  .install-methods {
+    margin-top: 40px;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    align-items: flex-start;
+    gap: 24px 48px;
+  }
+
+  .install-method {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .install-method-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--fg-dim);
+  }
+
+  .install-method .install { margin: 0; max-width: 100%; }
+  .install-method .install + .install { margin-top: 10px; }
+
+  /* slash-command boxes carry the leading "/" inside <code> so the
+     Copy button yields the verbatim command — no "$" prompt to strip. */
+  .install.cmd > code { padding-left: 18px; }
+  .install > code { overflow-x: auto; white-space: nowrap; }
+
+  @media (max-width: 880px) {
+    .install-methods { flex-direction: column; align-items: center; gap: 32px; }
+    .install-method { width: 100%; max-width: 480px; }
+    .install-method .install { width: 100%; }
+  }
+
   footer {
     border-top: 1px solid var(--rule);
     padding: 36px 0;
@@ -680,7 +719,7 @@
 
 <section class="hero" id="top">
   <div class="container">
-    <div class="eyebrow reveal" data-reveal="fade-up">v1.0.23 · OPEN SOURCE · MIT</div>
+    <div class="eyebrow reveal" data-reveal="fade-up">v1.0.24 · OPEN SOURCE · MIT</div>
     <h1>
       <span class="word coach reveal" data-reveal="hero-word">Coach</span><span class="lobster reveal" data-reveal="hero-emoji">🦞</span><span class="word claw reveal" data-reveal="hero-word">Claw</span>
     </h1>
@@ -860,10 +899,26 @@
         macOS launchd or Linux cron. Idempotent installer. Backs up
         existing state. Roll back any run with <code>git checkout</code>.
       </p>
-      <div class="install">
-        <span class="prompt">$</span>
-        <code id="cta-install-cmd">npx @rm0nroe/coach-claw@latest install --seed</code>
-        <button data-copy="cta-install-cmd">Copy</button>
+      <div class="install-methods">
+        <div class="install-method">
+          <span class="install-method-label">npm · terminal</span>
+          <div class="install">
+            <span class="prompt">$</span>
+            <code id="cta-install-cmd">npx @rm0nroe/coach-claw@latest install --seed</code>
+            <button data-copy="cta-install-cmd">Copy</button>
+          </div>
+        </div>
+        <div class="install-method">
+          <span class="install-method-label">Claude Code plugin</span>
+          <div class="install cmd">
+            <code id="cta-plugin-add">/plugin marketplace add rm0nroe/coach-claw-plugin-marketplace</code>
+            <button data-copy="cta-plugin-add">Copy</button>
+          </div>
+          <div class="install cmd">
+            <code id="cta-plugin-install">/plugin install coach-claw@coach-claw-plugins</code>
+            <button data-copy="cta-plugin-install">Copy</button>
+          </div>
+        </div>
       </div>
     </div>
   </div>

@@ -313,8 +313,8 @@ def test_graduation_ide_positive(cup):
 # -----------------------------------------------------------------------------
 # Graduation full-bar color: yellow for GRADUATED ⚡️ (negative-direction,
 # weakness retired), black for MASTERED 🌟 (positive-direction, strength
-# locked in). The streak ladder ⚪/🔴 is reserved for active mid-streak
-# attribution — graduation ceremonies get bespoke colors.
+# locked in). The streak ladder 🟥/⬜️ (🔥🔥🔥🔥🔥 at full) is the active
+# mid-streak attribution look — graduation ceremonies get bespoke colors.
 # -----------------------------------------------------------------------------
 
 def test_curated_override_wins_over_marker_name(cup):
